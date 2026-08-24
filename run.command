@@ -166,9 +166,17 @@ ok "Server typechecks."
 ( cd app && npm run typecheck >/dev/null 2>&1 ) || die "App typecheck failed. Run: cd app && npm run typecheck"
 ok "App typechecks."
 
+# Decide on the exit code, not on the output text. Node's default test reporter
+# differs by version -- Node 22 emits TAP ("# fail 0") while Node 25 emits the
+# spec reporter ("ℹ fail 0") -- so parsing the summary misreads a passing
+# run on a newer Node. The count below is for display only.
 TEST_OUT=$(cd server && npm test 2>&1)
-if printf '%s' "$TEST_OUT" | grep -qE '^# fail 0'; then
-  ok "Unit tests: $(printf '%s' "$TEST_OUT" | grep -E '^# pass' | grep -oE '[0-9]+') passed."
+TEST_STATUS=$?
+if [ "$TEST_STATUS" -eq 0 ]; then
+  # Both reporters render the summary as "<marker> pass <n>", so match on
+  # fields rather than a byte-wise character class.
+  TEST_COUNT=$(printf '%s' "$TEST_OUT" | awk '$2=="pass" {print $3; exit}')
+  ok "Unit tests: ${TEST_COUNT:-all} passed."
 else
   printf '%s\n' "$TEST_OUT" | tail -30
   die "Unit tests failed."
