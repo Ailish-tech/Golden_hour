@@ -119,8 +119,12 @@ npm start
 For device testing, `EXPO_PUBLIC_API_URL` must be your machine's LAN address —
 a phone cannot reach the bundler host's `localhost`.
 
-Speech recognition is a native module, so device testing needs a development
-build (`npx expo prebuild` then `npm run android` / `npm run ios`), not Expo Go.
+Expo Go works for everything except spoken answers. Speech recognition is a
+native module Expo Go cannot provide, so the app loads it optionally: voice
+answers are unavailable there and the triage screen says so, while spoken
+guidance, SOS, dispatch and the CPR metronome all work normally. For voice
+answers on a device, build a development client (`npx expo prebuild`, then
+`npm run ios` / `npm run android`).
 
 ### Granting hospital access
 

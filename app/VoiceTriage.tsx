@@ -23,10 +23,6 @@ import {
 } from 'react-native';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
-import {
-  ExpoSpeechRecognitionModule,
-  addSpeechRecognitionListener,
-} from 'expo-speech-recognition';
 
 import { authedFetch } from './api';
 import {
@@ -48,6 +44,42 @@ interface VoiceTriageProps {
 const CPR_BPM = 110;
 const CPR_INTERVAL_MS = Math.round((60 / CPR_BPM) * 1000); // ~545ms
 const VOICE_LOCALE = 'en-US';
+
+// ---------------------------------------------------------------------------
+// Native speech recognition — loaded lazily and optionally
+//
+// expo-speech-recognition resolves a native module at import time, and that
+// module does not exist in Expo Go. Importing it at module scope crashes the
+// entire app on a client that simply cannot provide it, taking down SOS,
+// dispatch and the CPR metronome along with it. Voice input is an enhancement;
+// it must not be able to do that.
+// ---------------------------------------------------------------------------
+interface SpeechRecognitionApi {
+  ExpoSpeechRecognitionModule: {
+    requestPermissionsAsync: () => Promise<{ granted: boolean }>;
+    start: (options: { lang: string; interimResults: boolean; continuous: boolean }) => void;
+    abort: () => void;
+  };
+  addSpeechRecognitionListener: (
+    event: string,
+    listener: (payload: { results?: Array<{ transcript?: string }> }) => void
+  ) => { remove: () => void };
+}
+
+let cachedSpeechApi: SpeechRecognitionApi | null | undefined;
+
+/** The native speech API, or null when this client cannot provide it. */
+function getSpeechApi(): SpeechRecognitionApi | null {
+  if (cachedSpeechApi !== undefined) return cachedSpeechApi;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    cachedSpeechApi = require('expo-speech-recognition') as SpeechRecognitionApi;
+  } catch (_e) {
+    // Expo Go, or a build without the module. Fall back to the on-screen buttons.
+    cachedSpeechApi = null;
+  }
+  return cachedSpeechApi;
+}
 
 // Web Speech Recognition Type Definition
 interface IWebSpeechRecognition {
@@ -94,6 +126,15 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
 
   // Current Node
   const currentNode: TriageNode = TriageTree[currentNodeId] || TriageTree[INITIAL_NODE_ID];
+
+  // Whether this client can listen at all. Web uses the browser's Speech
+  // Recognition API; native needs the optional module, which Expo Go lacks.
+  const voiceAvailable: boolean =
+    Platform.OS === 'web'
+      ? typeof window !== 'undefined' &&
+        !!((window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition ||
+           (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition)
+      : getSpeechApi() !== null;
 
   // -----------------------------------------------------------------------
   // Live Backend Telemetry Sync Helper
@@ -336,11 +377,14 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
 
     // Native: previously nothing listened here at all, so "hands-free" triage
     // only ever worked in a browser.
+    const api = getSpeechApi();
+    if (!api) return; // no native speech on this client — buttons remain
+
     (async () => {
       try {
-        const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+        const perm = await api.ExpoSpeechRecognitionModule.requestPermissionsAsync();
         if (!perm.granted) return;
-        ExpoSpeechRecognitionModule.start({
+        api.ExpoSpeechRecognitionModule.start({
           lang: VOICE_LOCALE,
           interimResults: false,
           continuous: false,
@@ -429,18 +473,21 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
   useEffect(() => {
     if (Platform.OS === 'web') return;
 
-    const onResult = addSpeechRecognitionListener('result', (event) => {
+    const api = getSpeechApi();
+    if (!api) return;
+
+    const onResult = api.addSpeechRecognitionListener('result', (event) => {
       if (!isMountedRef.current) return;
       const transcript = event.results?.[0]?.transcript;
       if (transcript) applyTranscript(transcript);
     });
-    const onEnd = addSpeechRecognitionListener('end', () => {
+    const onEnd = api.addSpeechRecognitionListener('end', () => {
       if (isMountedRef.current) setIsListening(false);
     });
-    const onStart = addSpeechRecognitionListener('start', () => {
+    const onStart = api.addSpeechRecognitionListener('start', () => {
       if (isMountedRef.current) setIsListening(true);
     });
-    const onError = addSpeechRecognitionListener('error', () => {
+    const onError = api.addSpeechRecognitionListener('error', () => {
       if (isMountedRef.current) setIsListening(false);
     });
 
@@ -465,7 +512,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
       audioCtxRef.current = null;
       if (Platform.OS !== 'web') {
         try {
-          ExpoSpeechRecognitionModule.abort();
+          getSpeechApi()?.ExpoSpeechRecognitionModule.abort();
         } catch (_e) {
           // nothing listening
         }
@@ -486,11 +533,25 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           <View
             style={[
               styles.micDot,
-              { backgroundColor: isListening ? '#22c55e' : isSpeaking ? '#38bdf8' : '#eab308' },
+              {
+              backgroundColor: !voiceAvailable
+                ? '#64748b'
+                : isListening
+                ? '#22c55e'
+                : isSpeaking
+                ? '#38bdf8'
+                : '#eab308',
+            },
             ]}
           />
           <Text style={styles.micStatusText}>
-            {isListening ? 'MIC ACTIVE • SAY YES / NO' : isSpeaking ? 'VOICE COACHING...' : 'STANDBY'}
+            {!voiceAvailable
+              ? 'TAP TO ANSWER'
+              : isListening
+              ? 'MIC ACTIVE • SAY YES / NO'
+              : isSpeaking
+              ? 'VOICE COACHING...'
+              : 'STANDBY'}
           </Text>
         </View>
       </View>
@@ -534,6 +595,12 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
                 </TouchableOpacity>
               )}
             </View>
+          )}
+
+          {!voiceAvailable && currentNode.action !== 'auto_advance' && (
+            <Text style={styles.voiceUnavailableNote}>
+              Voice answers need a development build — spoken guidance still works, tap YES or NO.
+            </Text>
           )}
 
           {/* Auto-advance indicator for instruction-only nodes */}
@@ -837,6 +904,14 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
     fontWeight: '800',
     color: '#fca5a5',
+  } as TextStyle,
+
+  voiceUnavailableNote: {
+    fontSize: 10,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginTop: 10,
+    lineHeight: 15,
   } as TextStyle,
 
   // Auto-advance indicator
