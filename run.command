@@ -83,26 +83,63 @@ ok "npm $(npm -v)"
 # ---------------------------------------------------------------------------
 step "Checking MongoDB on port $MONGO_PORT"
 
-if port_busy "$MONGO_PORT"; then
-  ok "Already running — using it."
-elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  if docker ps -aq -f name="$MONGO_CONTAINER" | grep -q .; then
-    docker start "$MONGO_CONTAINER" >/dev/null && ok "Restarted existing container."
-  else
-    docker run -d --name "$MONGO_CONTAINER" -p "$MONGO_PORT":27017 mongo:7 >/dev/null \
-      && ok "Started mongo:7 in Docker." \
-      || die "Could not start the MongoDB container."
-  fi
+# Wait for the port to accept connections. A service manager reporting success
+# is not the same as MongoDB being reachable, so the port is what we trust.
+wait_for_mongo() {
+  local tries="${1:-30}"
   printf '  waiting for MongoDB'
-  for _ in $(seq 1 30); do
-    port_busy "$MONGO_PORT" && break
+  for _ in $(seq 1 "$tries"); do
+    if port_busy "$MONGO_PORT"; then printf '\n'; return 0; fi
     printf '.'; sleep 1
   done
   printf '\n'
-  port_busy "$MONGO_PORT" || die "MongoDB did not come up on port $MONGO_PORT."
+  return 1
+}
+
+mongo_help() {
+  cat <<HELP
+     Start it manually with one of:
+       brew services restart mongodb-community
+       mongod --config \$(brew --prefix)/etc/mongod.conf --fork \\
+              --logpath \$(brew --prefix)/var/log/mongodb/mongo.log
+       docker run -d -p $MONGO_PORT:27017 mongo:7
+
+     If Homebrew reports "Bootstrap failed: 5: Input/output error", the launch
+     agent is stuck rather than missing. Clear it and retry:
+       brew services stop mongodb-community
+       launchctl bootout gui/\$(id -u)/homebrew.mxcl.mongodb-community 2>/dev/null
+       brew services start mongodb-community
+HELP
+}
+
+if port_busy "$MONGO_PORT"; then
+  ok "Already running — using it."
+
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if docker ps -aq -f name="$MONGO_CONTAINER" | grep -q .; then
+    docker start "$MONGO_CONTAINER" >/dev/null || die "Could not start the $MONGO_CONTAINER container."
+  else
+    docker run -d --name "$MONGO_CONTAINER" -p "$MONGO_PORT":27017 mongo:7 >/dev/null \
+      || die "Could not create the MongoDB container."
+  fi
+  wait_for_mongo 30 || die "MongoDB container started but nothing is listening on port $MONGO_PORT."
+  ok "Running in Docker."
+
 elif command -v brew >/dev/null 2>&1 && brew list mongodb-community >/dev/null 2>&1; then
-  brew services start mongodb-community >/dev/null && ok "Started via Homebrew."
-  sleep 3
+  brew services start mongodb-community >/dev/null 2>&1
+  if ! wait_for_mongo 15; then
+    # A stuck launch agent reports "Bootstrap failed: 5" and never binds.
+    # Tearing the service down and bringing it back usually clears it.
+    warn "Homebrew service did not come up — clearing it and retrying."
+    brew services stop mongodb-community >/dev/null 2>&1
+    launchctl bootout "gui/$(id -u)/homebrew.mxcl.mongodb-community" >/dev/null 2>&1
+    sleep 2
+    brew services start mongodb-community >/dev/null 2>&1
+    wait_for_mongo 25 || die "MongoDB would not start on port $MONGO_PORT.
+$(mongo_help)"
+  fi
+  ok "Started via Homebrew."
+
 else
   die "MongoDB is not running and no way to start it was found.
      Install one of:
