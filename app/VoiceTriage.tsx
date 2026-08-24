@@ -406,9 +406,9 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           </Text>
           <Text style={styles.questionText}>{spokenText || currentNode.text}</Text>
 
-          {currentNode.imageUrl && (
+          {currentNode.imageSource && (
             <Image
-              source={{ uri: currentNode.imageUrl }}
+              source={currentNode.imageSource}
               style={styles.instructionalImage}
               resizeMode="contain"
             />

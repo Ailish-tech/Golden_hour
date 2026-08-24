@@ -42,8 +42,8 @@ export interface TriageNode {
   autoAdvanceTo?: string;
   /** Delay in ms before auto-advancing (default 3000) */
   autoAdvanceDelayMs?: number;
-  /** Optional URL for an instructional image (e.g. CPR diagram) */
-  imageUrl?: string;
+  /** Optional local image source for an instructional image (e.g. CPR diagram) */
+  imageSource?: any;
 }
 
 export interface TriageTreeMap {
@@ -139,7 +139,7 @@ export const TriageTree: TriageTreeMap = {
     label: 'CONTROL BLEEDING',
     step: 2,
     action: 'control_bleeding',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Bleeding_control_-_direct_pressure.svg/640px-Bleeding_control_-_direct_pressure.svg.png',
+    imageSource: require('./assets/direct_pressure.jpg'),
   },
 
   control_bleeding_persist: {
@@ -176,7 +176,7 @@ export const TriageTree: TriageTreeMap = {
     label: 'RECOVERY POSITION — MONITOR',
     step: 3,
     action: 'recovery_position',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Recovery_position.svg/640px-Recovery_position.svg.png',
+    imageSource: require('./assets/recovery_position.jpg'),
   },
 
   // =========================================================================
@@ -191,7 +191,7 @@ export const TriageTree: TriageTreeMap = {
     icon: '⚡',
     label: 'CPR PREPARATION',
     step: 4,
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/CPR_adult_compression_and_airway.svg/640px-CPR_adult_compression_and_airway.svg.png',
+    imageSource: require('./assets/cpr_chest_compressions.jpg'),
   },
 
   start_cpr: {
