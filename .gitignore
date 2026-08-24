@@ -9,3 +9,6 @@ dist/
 # Generated incident records — never commit, they contain real coordinates
 *_cert.pdf
 test_downloaded_*.pdf
+
+# Local run logs
+.logs/

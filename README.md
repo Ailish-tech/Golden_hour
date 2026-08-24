@@ -30,6 +30,22 @@ stored record, checkable at `/api/verify/:hash`.
 > It does not confer legal status. The Section 134A protections it summarises
 > apply by law whether or not anyone holds it.
 
+## Quick start
+
+On macOS, double-click **`run.command`** (or run `./run.command`). It checks
+prerequisites, starts MongoDB, creates the `.env` files, installs
+dependencies, runs typecheck and tests, boots the backend, runs the
+end-to-end check, and opens the app.
+
+```bash
+./run.command           # set up, verify, launch
+./run.command verify    # set up and verify only
+./run.command stop      # stop the MongoDB container it started
+```
+
+It configures local auth with `ALLOW_INSECURE_NO_AUTH=true` so you can try it
+without a Firebase project. That is development-only — see Setup below.
+
 ## Prerequisites
 
 - Node.js 22+
