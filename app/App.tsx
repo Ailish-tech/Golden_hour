@@ -24,14 +24,11 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
-import { Audio } from 'expo-av';
 import VoiceTriage from './VoiceTriage';
 import AuthScreen from './AuthScreen';
 import HospitalPortal, { type EmergencyIncidentItem } from './HospitalPortal';
 import { logoutUser, type AppUserProfile } from './firebaseConfig';
 import { authedFetch } from './api';
-
-type Sound = Audio.Sound;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,9 +52,10 @@ export interface HospitalInfo {
   distanceKm: number;
   distanceText: string;
   etaMinutes: number;
-  ambulanceUnit: string;
-  transmissionStatus: string;
-  bedsAvailable: number;
+  /** Present only once a hospital desk actually assigns a unit. */
+  ambulanceUnit?: string;
+  /** null when capacity is unknown — map data does not carry bed counts. */
+  bedsAvailable: number | null;
   googleMapsUrl: string;
 }
 
@@ -70,13 +68,16 @@ interface TraumaProtocolStep {
 
 interface SOSApiResponse {
   status: 'success' | 'error';
+  incidentId?: string;
+  incidentCode?: string;
+  role?: 'PRIMARY_REPORTER' | 'SECONDARY_REPORTER';
+  message?: string;
+  reporterCount?: number;
   hash?: string;
   timestamp?: string;
-  userId?: string;
   coordinates?: Coordinates;
   pdfBase64?: string;
-  message?: string;
-  nearestHospital?: HospitalInfo;
+  nearestHospital?: HospitalInfo | null;
   backupHospitals?: HospitalInfo[];
 }
 
@@ -122,66 +123,26 @@ export default function App(): React.JSX.Element {
   // -- State ---------------------------------------------------------------
   const [activeTab, setActiveTab] = useState<NavigationTab>('HUB');
   const [appPhase, setAppPhase] = useState<AppPhase>('idle');
-  const [statusIndex, setStatusIndex] = useState<number>(-1);
   const [hash, setHash] = useState<string | null>(null);
   const [timestamp, setTimestamp] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<Coordinates>(MOCK_COORDS);
-  const [permissionGranted, setPermissionGranted] = useState<boolean>(false);
-  const [sound, setSound] = useState<Sound | null>(null);
   const [checkedSteps, setCheckedSteps] = useState<number[]>([]);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [showCertModal, setShowCertModal] = useState<boolean>(false);
-  const [incidentId, setIncidentId] = useState<string>('CAD-8492-TX');
-  const [primaryHospital, setPrimaryHospital] = useState<HospitalInfo>({
-    id: 'HOSP-01',
-    name: 'Sawai Man Singh (SMS) Govt Trauma Hospital',
-    address: 'Jawahar Lal Nehru Marg, Ashok Nagar Trauma Ward',
-    phone: '108 / +91-141-2560291',
-    traumaLevel: 'Level 1 Apex Trauma Center',
-    lat: 26.8924,
-    lng: 75.8150,
-    distanceKm: 0.35,
-    distanceText: '350m away',
-    etaMinutes: 4,
-    ambulanceUnit: 'ALS Mobile Unit #108-ALPHA',
-    transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED',
-    bedsAvailable: 18,
-    googleMapsUrl: 'https://www.google.com/maps/dir/?api=1&destination=26.8924,75.8150',
-  });
-  const [backupHospitals, setBackupHospitals] = useState<HospitalInfo[]>([
-    {
-      id: 'HOSP-02',
-      name: 'Fortis Escorts Emergency Center',
-      address: 'JLN Marg, Malviya Nagar',
-      phone: '+91-141-2547000',
-      traumaLevel: 'Level 2 Cardiac Care',
-      lat: 26.8480,
-      lng: 75.8080,
-      distanceKm: 1.2,
-      distanceText: '1.2 km away',
-      etaMinutes: 6,
-      ambulanceUnit: 'ICU Unit #108-BRAVO',
-      transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED',
-      bedsAvailable: 8,
-      googleMapsUrl: 'https://www.google.com/maps/dir/?api=1&destination=26.8480,75.8080',
-    },
-    {
-      id: 'HOSP-03',
-      name: 'Apex Super Speciality Hospital',
-      address: 'Sector 8, Malviya Nagar',
-      phone: '+91-141-2751871',
-      traumaLevel: 'Level 1 Trauma Care',
-      lat: 26.8530,
-      lng: 75.8140,
-      distanceKm: 2.5,
-      distanceText: '2.5 km away',
-      etaMinutes: 9,
-      ambulanceUnit: 'Rapid Unit #108-CHARLIE',
-      transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED',
-      bedsAvailable: 4,
-      googleMapsUrl: 'https://www.google.com/maps/dir/?api=1&destination=26.8530,75.8140',
-    },
-  ]);
+  const [incidentId, setIncidentId] = useState<string | null>(null);
+  const [incidentCode, setIncidentCode] = useState<string | null>(null);
+  const [transmissionError, setTransmissionError] = useState<string | null>(null);
+  const [incidentStatus, setIncidentStatus] = useState<string | null>(null);
+  // Routing is unknown until the server answers. Pre-filling these with a
+  // plausible-looking hospital would show a responder a destination nobody
+  // selected for them.
+  const [primaryHospital, setPrimaryHospital] = useState<HospitalInfo | null>(null);
+  const [backupHospitals, setBackupHospitals] = useState<HospitalInfo[]>([]);
+
+  // Every facility we actually know about, primary first.
+  const nearbyHospitals: HospitalInfo[] = primaryHospital
+    ? [primaryHospital, ...backupHospitals]
+    : backupHospitals;
 
   // -- Animations ----------------------------------------------------------
   const pulseAnim = useRef<Animated.Value>(new Animated.Value(1)).current;
@@ -211,7 +172,6 @@ export default function App(): React.JSX.Element {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setCoordinates({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setPermissionGranted(true);
         },
         () => {
           fetch('https://ipapi.co/json/')
@@ -239,11 +199,10 @@ export default function App(): React.JSX.Element {
           const data = await res.json();
           const inc = data.incident;
           if (data.status === 'success' && inc?.ambulanceUnitAssigned) {
-            setPrimaryHospital((prev) => ({
-              ...prev,
-              ambulanceUnit: inc.ambulanceUnitAssigned,
-              transmissionStatus: 'AMBULANCE_DISPATCHED',
-            }));
+            setPrimaryHospital((prev) =>
+              prev ? { ...prev, ambulanceUnit: inc.ambulanceUnitAssigned } : prev
+            );
+            setIncidentStatus(inc.status ?? null);
           }
         }
       } catch (_e) {}
@@ -299,13 +258,6 @@ export default function App(): React.JSX.Element {
     ripple.start();
     return () => ripple.stop();
   }, [appPhase, ringScale, ringOpacity]);
-
-  // -- Cleanup sound on unmount --------------------------------------------
-  useEffect((): (() => void) => {
-    return () => {
-      if (sound) sound.unloadAsync();
-    };
-  }, [sound]);
 
   // -----------------------------------------------------------------------
   // Direct Web & Native Geolocation Engine
@@ -435,17 +387,6 @@ export default function App(): React.JSX.Element {
     ]).start();
   }, [fadeIn, slideUp]);
 
-  const advanceStatus = useCallback(
-    (targetIndex: number, delay: number): Promise<void> =>
-      new Promise<void>((resolve): void => {
-        setTimeout((): void => {
-          setStatusIndex(targetIndex);
-          resolve();
-        }, delay);
-      }),
-    []
-  );
-
   const toggleStep = useCallback((index: number): void => {
     setCheckedSteps((prev) =>
       prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
@@ -566,60 +507,59 @@ export default function App(): React.JSX.Element {
     setCoordinates(coords);
 
     // 3. Advance to Active
-    setStatusIndex(0);
     setAppPhase('active');
-    await advanceStatus(1, 300);
 
-    // 4. Send parallel SOS and Dispatch requests to server
+    // 4. One call: the server dedups, records, hashes and routes in one place.
     try {
-      const [dispatchRes, sosRes] = await Promise.allSettled([
-        authedFetch('/api/dispatch', {
-          method: 'POST',
-          body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
-        }),
-        authedFetch('/api/sos', {
-          method: 'POST',
-          body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
-        }),
-      ]);
+      const res = await authedFetch('/api/sos', {
+        method: 'POST',
+        body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
+      });
 
-      if (dispatchRes.status === 'fulfilled') {
-        const dispatchData = await dispatchRes.value.json();
-        if (dispatchData.incidentId) setIncidentId(dispatchData.incidentId);
-        if (dispatchData.nearestHospital) setPrimaryHospital(dispatchData.nearestHospital);
-        if (dispatchData.backupHospitals) setBackupHospitals(dispatchData.backupHospitals);
+      if (!res.ok) {
+        throw new Error(`SOS request failed (${res.status})`);
       }
 
-      if (sosRes.status === 'fulfilled') {
-        const data: SOSApiResponse = await sosRes.value.json();
-        if (data.status === 'success') {
-          setHash(data.hash ?? null);
-          setTimestamp(data.timestamp ?? new Date().toISOString());
-          setPdfBase64(data.pdfBase64 ?? null);
-          if (data.nearestHospital) setPrimaryHospital(data.nearestHospital);
-          if (data.backupHospitals) setBackupHospitals(data.backupHospitals);
-
-          await advanceStatus(2, 400);
-          await advanceStatus(3, 400);
-        }
+      const data: SOSApiResponse = await res.json();
+      if (data.status !== 'success') {
+        throw new Error(data.message || 'SOS was not recorded.');
       }
-    } catch (_err) {
-      setHash('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
-      setTimestamp(new Date().toISOString());
-      setStatusIndex(3);
+
+      setIncidentId(data.incidentId ?? null);
+      setIncidentCode(data.incidentCode ?? null);
+      setHash(data.hash ?? null);
+      setTimestamp(data.timestamp ?? null);
+      setPdfBase64(data.pdfBase64 ?? null);
+      setPrimaryHospital(data.nearestHospital ?? null);
+      setBackupHospitals(data.backupHospitals ?? []);
+      setTransmissionError(null);
+    } catch (err) {
+      // No fabricated proof: if the record did not reach the server, say so.
+      console.warn('SOS transmission failed:', err);
+      setHash(null);
+      setTimestamp(null);
+      setPdfBase64(null);
+      setTransmissionError(
+        'Could not reach the emergency server. Your location was NOT transmitted — call 108 directly.'
+      );
     }
-  }, [appPhase, animateIn, playEmergencyAudio, getCoordinates, advanceStatus, currentUser]);
+  }, [appPhase, animateIn, playEmergencyAudio, getCoordinates]);
 
   // -----------------------------------------------------------------------
   // Reset SOS
   // -----------------------------------------------------------------------
   const handleReset = useCallback((): void => {
     setAppPhase('idle');
-    setStatusIndex(-1);
     setHash(null);
     setTimestamp(null);
     setPdfBase64(null);
     setCheckedSteps([]);
+    setIncidentId(null);
+    setIncidentCode(null);
+    setIncidentStatus(null);
+    setTransmissionError(null);
+    setPrimaryHospital(null);
+    setBackupHospitals([]);
     try {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -741,7 +681,7 @@ export default function App(): React.JSX.Element {
         <View style={styles.hashPreviewBox}>
           <Text style={styles.hashPreviewLabel}>SHA-256 DIGEST</Text>
           <Text style={styles.hashPreviewValue} numberOfLines={2}>
-            {hash || 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'}
+            {hash || 'No record yet — trigger an emergency to generate one'}
           </Text>
         </View>
         <Text style={styles.hudCardSubtext}>Tap to view cryptographic audit log & certificate.</Text>
@@ -768,53 +708,47 @@ export default function App(): React.JSX.Element {
         </View>
       </TouchableOpacity>
 
-      {/* 4. Medical Radar (3 Facilities in Range) */}
+      {/* 4. Medical Radar */}
       <View style={styles.hudFeatureCard}>
         <View style={styles.cardHeaderRow}>
           <Text style={styles.cardHeaderLabel}>📡 MEDICAL RADAR</Text>
-          <Text style={styles.radarCountText}>3 FACILITIES IN RANGE</Text>
+          <Text style={styles.radarCountText}>
+            {nearbyHospitals.length > 0
+              ? `${nearbyHospitals.length} ${nearbyHospitals.length === 1 ? 'FACILITY' : 'FACILITIES'} IN RANGE`
+              : 'AWAITING LOOKUP'}
+          </Text>
         </View>
 
-        <View style={styles.radarHospitalList}>
-          {/* Facility 1 */}
-          <TouchableOpacity
-            style={styles.radarHospitalItem}
-            onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.radarItemIconBox}>
-              <Text style={styles.radarItemIcon}>🏥</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.radarItemName}>{primaryHospital.name}</Text>
-              <Text style={styles.radarItemMeta}>
-                ETA: {primaryHospital.etaMinutes} MIN [{primaryHospital.distanceText}]
-              </Text>
-            </View>
-            <Text style={styles.radarItemArrow}>➔</Text>
-          </TouchableOpacity>
-
-          {/* Facility 2 */}
-          {backupHospitals.map((hosp, idx) => (
-            <TouchableOpacity
-              key={idx}
-              style={styles.radarHospitalItem}
-              onPress={() => openHospitalMap(hosp.googleMapsUrl)}
-              activeOpacity={0.8}
-            >
-              <View style={styles.radarItemIconBoxSecondary}>
-                <Text style={styles.radarItemIcon}>🏥</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.radarItemName}>{hosp.name}</Text>
-                <Text style={styles.radarItemMeta}>
-                  ETA: {hosp.etaMinutes} MIN [{hosp.distanceText}]
-                </Text>
-              </View>
-              <Text style={styles.radarItemArrow}>➔</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {nearbyHospitals.length === 0 ? (
+          <View style={styles.radarEmptyBox}>
+            <Text style={styles.radarEmptyText}>
+              Nearby hospitals are resolved when you trigger an emergency. In an emergency,
+              call 108 directly.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.radarHospitalList}>
+            {nearbyHospitals.map((hosp, idx) => (
+              <TouchableOpacity
+                key={hosp.id}
+                style={styles.radarHospitalItem}
+                onPress={() => openHospitalMap(hosp.googleMapsUrl)}
+                activeOpacity={0.8}
+              >
+                <View style={idx === 0 ? styles.radarItemIconBox : styles.radarItemIconBoxSecondary}>
+                  <Text style={styles.radarItemIcon}>🏥</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.radarItemName}>{hosp.name}</Text>
+                  <Text style={styles.radarItemMeta}>
+                    ETA: {hosp.etaMinutes} MIN [{hosp.distanceText}]
+                  </Text>
+                </View>
+                <Text style={styles.radarItemArrow}>➔</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -823,12 +757,22 @@ export default function App(): React.JSX.Element {
   const renderActiveTransmissionHub = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
       {/* 1. Active SOS Broadcast Alert Bar */}
+      {transmissionError && (
+        <View style={styles.transmissionErrorBanner}>
+          <Text style={styles.transmissionErrorText}>⚠️ {transmissionError}</Text>
+        </View>
+      )}
+
       <View style={styles.activeBroadcastCard}>
         <View style={styles.activeBroadcastTop}>
           <View style={styles.activeRedBeacon} />
-          <Text style={styles.activeBroadcastTitle}>ACTIVE SOS BROADCAST</Text>
+          <Text style={styles.activeBroadcastTitle}>
+            {incidentCode ? 'EMERGENCY RECORDED' : 'RECORDING EMERGENCY…'}
+          </Text>
         </View>
-        <Text style={styles.activeBroadcastIncident}>INCIDENT #{incidentId}</Text>
+        <Text style={styles.activeBroadcastIncident}>
+          {incidentCode ? `INCIDENT #${incidentCode}` : 'Awaiting confirmation'}
+        </Text>
         <View style={styles.activeBroadcastCoordBox}>
           <Text style={styles.activeBroadcastCoordText}>
             📍 {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
@@ -836,109 +780,138 @@ export default function App(): React.JSX.Element {
         </View>
       </View>
 
-      {/* 2. Main Hospital CAD Dispatch Card */}
-      <View style={styles.hospitalCadCard}>
-        <View style={styles.cadStreamingHeader}>
-          <View style={styles.greenPulsingDot} />
-          <Text style={styles.cadStreamingText}>
-            LIVE TELEMETRY STREAMING • 2-WAY CAD DISPATCH ACTIVE
+      {/* 2. Routed hospital */}
+      {primaryHospital ? (
+        <View style={styles.hospitalCadCard}>
+          <View style={styles.cadStreamingHeader}>
+            <View style={styles.greenPulsingDot} />
+            <Text style={styles.cadStreamingText}>
+              RECORD VISIBLE TO HOSPITAL DESK • TRIAGE UPDATES SYNCING
+            </Text>
+          </View>
+
+          <Text style={styles.hospitalMainName}>{primaryHospital.name}</Text>
+          <Text style={styles.hospitalTraumaLevel}>{primaryHospital.traumaLevel}</Text>
+
+          <View style={styles.locationSharedBadge}>
+            <Text style={styles.locationSharedText}>📍 LOCATION SHARED</Text>
+          </View>
+
+          <View style={styles.cadMetricsRow}>
+            <View style={styles.cadMetricBox}>
+              <Text style={styles.cadMetricIcon}>📍</Text>
+              <Text style={styles.cadMetricValue}>{primaryHospital.distanceText}</Text>
+              <Text style={styles.cadMetricLabel}>DISTANCE</Text>
+            </View>
+
+            <View style={styles.cadMetricBox}>
+              <Text style={styles.cadMetricIconGreen}>🚑</Text>
+              <Text style={styles.cadMetricValueGreen}>~{primaryHospital.etaMinutes} MIN</Text>
+              <Text style={styles.cadMetricLabel}>EST. DRIVE</Text>
+            </View>
+
+            <View style={styles.cadMetricBox}>
+              <Text style={styles.cadMetricIconCyan}>🛏️</Text>
+              <Text style={styles.cadMetricValueCyan}>
+                {primaryHospital.bedsAvailable ?? '—'}
+              </Text>
+              <Text style={styles.cadMetricLabel}>
+                {primaryHospital.bedsAvailable == null ? 'BEDS UNKNOWN' : 'ICU BEDS'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.cadActionsRow}>
+            <TouchableOpacity
+              style={styles.cadCallButton}
+              onPress={() => callHospital(primaryHospital.phone)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cadCallBtnText}>📞 CALL {primaryHospital.phone}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cadDirectionsButton}
+              onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cadDirectionsBtnText}>🗺️ DIRECTIONS</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.hospitalCadCardEmpty}>
+          <Text style={styles.hospitalEmptyTitle}>NO FACILITY LOCATED</Text>
+          <Text style={styles.hospitalEmptyText}>
+            No hospital could be resolved for your location. Call 108 now and give them your
+            coordinates directly.
           </Text>
-        </View>
-
-        <Text style={styles.hospitalMainName}>{primaryHospital.name}</Text>
-        <Text style={styles.hospitalTraumaLevel}>{primaryHospital.traumaLevel}</Text>
-
-        <View style={styles.locationSharedBadge}>
-          <Text style={styles.locationSharedText}>📍 LOCATION SHARED</Text>
-        </View>
-
-        {/* 3 Metric Telemetry Boxes */}
-        <View style={styles.cadMetricsRow}>
-          <View style={styles.cadMetricBox}>
-            <Text style={styles.cadMetricIcon}>📍</Text>
-            <Text style={styles.cadMetricValue}>{primaryHospital.distanceText}</Text>
-            <Text style={styles.cadMetricLabel}>DISTANCE</Text>
-          </View>
-
-          <View style={styles.cadMetricBox}>
-            <Text style={styles.cadMetricIconGreen}>🚑</Text>
-            <Text style={styles.cadMetricValueGreen}>{primaryHospital.etaMinutes} MIN</Text>
-            <Text style={styles.cadMetricLabel}>AMB ETA</Text>
-          </View>
-
-          <View style={styles.cadMetricBox}>
-            <Text style={styles.cadMetricIconCyan}>🛏️</Text>
-            <Text style={styles.cadMetricValueCyan}>{primaryHospital.bedsAvailable}</Text>
-            <Text style={styles.cadMetricLabel}>ICU BEDS</Text>
-          </View>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.cadActionsRow}>
           <TouchableOpacity
             style={styles.cadCallButton}
-            onPress={() => callHospital(primaryHospital.phone)}
+            onPress={() => callHospital('108')}
             activeOpacity={0.8}
           >
-            <Text style={styles.cadCallBtnText}>📞 CALL HOSPITAL (108)</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.cadDirectionsButton}
-            onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.cadDirectionsBtnText}>🗺️ DIRECTIONS</Text>
+            <Text style={styles.cadCallBtnText}>📞 CALL 108</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      )}
 
-      {/* 3. Incident Timeline Stepper */}
+      {/* 3. Incident status — reflects what the server actually reports */}
       <View style={styles.timelineCard}>
-        <Text style={styles.timelineHeader}>INCIDENT TIMELINE</Text>
+        <Text style={styles.timelineHeader}>INCIDENT STATUS</Text>
 
         <View style={styles.timelineList}>
-          {/* Step 1 */}
           <View style={styles.timelineItem}>
-            <View style={styles.timelineIconCompleted}>
-              <Text style={styles.timelineCheck}>✓</Text>
+            <View style={hash ? styles.timelineIconCompleted : styles.timelineIconActive}>
+              <Text style={styles.timelineCheck}>{hash ? '✓' : '…'}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitle}>Reported</Text>
-              <Text style={styles.timelineItemTime}>T-00:04:12</Text>
+              <Text style={styles.timelineItemTitle}>Emergency recorded</Text>
+              <Text style={styles.timelineItemTime}>
+                {timestamp ? new Date(timestamp).toLocaleTimeString() : 'Sending…'}
+              </Text>
             </View>
           </View>
 
-          {/* Step 2 */}
           <View style={styles.timelineItem}>
-            <View style={styles.timelineIconCompleted}>
-              <Text style={styles.timelineCheck}>✓</Text>
+            <View style={pdfBase64 ? styles.timelineIconCompleted : styles.timelineIconActive}>
+              <Text style={styles.timelineCheck}>{pdfBase64 ? '✓' : '…'}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitle}>Generating Legal Shield</Text>
-              <Text style={styles.timelineItemTime}>T-00:03:50</Text>
+              <Text style={styles.timelineItemTitle}>Incident record generated</Text>
+              <Text style={styles.timelineItemTime}>
+                {pdfBase64 ? 'Available to download' : 'Generating…'}
+              </Text>
             </View>
           </View>
 
-          {/* Step 3 */}
           <View style={styles.timelineItem}>
-            <View style={styles.timelineIconGreen}>
-              <Text style={styles.timelineCheck}>✓</Text>
+            <View
+              style={
+                primaryHospital?.ambulanceUnit ? styles.timelineIconGreen : styles.timelineIconActive
+              }
+            >
+              <Text style={styles.timelineCheck}>
+                {primaryHospital?.ambulanceUnit ? '✓' : '…'}
+              </Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitleGreen}>Ambulance Dispatched</Text>
-              <Text style={styles.timelineItemTime}>T-00:01:20</Text>
-            </View>
-          </View>
-
-          {/* Step 4 */}
-          <View style={styles.timelineItem}>
-            <View style={styles.timelineIconActive}>
-              <View style={styles.timelineDotCyan} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitleCyan}>Shield Active</Text>
-              <Text style={styles.timelineItemTimeActive}>MONITORING LIVE...</Text>
+              <Text
+                style={
+                  primaryHospital?.ambulanceUnit
+                    ? styles.timelineItemTitleGreen
+                    : styles.timelineItemTitle
+                }
+              >
+                {primaryHospital?.ambulanceUnit
+                  ? `Ambulance assigned: ${primaryHospital.ambulanceUnit}`
+                  : 'Awaiting ambulance assignment'}
+              </Text>
+              <Text style={styles.timelineItemTime}>
+                {incidentStatus === 'AMBULANCE_DISPATCHED'
+                  ? 'Dispatched by hospital desk'
+                  : 'Not yet dispatched'}
+              </Text>
             </View>
           </View>
         </View>
@@ -947,9 +920,9 @@ export default function App(): React.JSX.Element {
       {/* 4. Standby Network List */}
       <View style={styles.standbyCard}>
         <Text style={styles.standbyHeader}>STANDBY NETWORK LIST</Text>
-        {backupHospitals.map((hosp, i) => (
+        {backupHospitals.map((hosp) => (
           <TouchableOpacity
-            key={i}
+            key={hosp.id}
             style={styles.standbyItem}
             onPress={() => openHospitalMap(hosp.googleMapsUrl)}
             activeOpacity={0.8}
@@ -957,7 +930,8 @@ export default function App(): React.JSX.Element {
             <View style={{ flex: 1 }}>
               <Text style={styles.standbyName}>{hosp.name}</Text>
               <Text style={styles.standbyMeta}>
-                {hosp.distanceText} • {hosp.bedsAvailable} Beds
+                {hosp.distanceText}
+                {hosp.bedsAvailable != null ? ` • ${hosp.bedsAvailable} beds` : ''}
               </Text>
             </View>
             <Text style={styles.standbyArrow}>➔</Text>
@@ -966,7 +940,7 @@ export default function App(): React.JSX.Element {
       </View>
 
       {/* 5. Voice AI & CPR Engine (Screen 3) */}
-      <VoiceTriage isActive={appPhase === 'active'} incidentId={incidentId} />
+      <VoiceTriage isActive={appPhase === 'active'} incidentId={incidentId ?? undefined} />
 
       {/* 6. Legal Certificate Action Banner */}
       <TouchableOpacity
@@ -1009,33 +983,27 @@ export default function App(): React.JSX.Element {
 
       <View style={styles.standbyCard}>
         <Text style={styles.standbyHeader}>NEARBY TRAUMA HUBS & ROUTES</Text>
-        <TouchableOpacity
-          style={styles.standbyItem}
-          onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={styles.standbyName}>{primaryHospital.name}</Text>
-            <Text style={styles.standbyMeta}>
-              {primaryHospital.distanceText} • ETA {primaryHospital.etaMinutes} mins • {primaryHospital.phone}
-            </Text>
-          </View>
-          <Text style={styles.standbyArrow}>🗺️</Text>
-        </TouchableOpacity>
-        {backupHospitals.map((h, i) => (
-          <TouchableOpacity
-            key={i}
-            style={styles.standbyItem}
-            onPress={() => openHospitalMap(h.googleMapsUrl)}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.standbyName}>{h.name}</Text>
-              <Text style={styles.standbyMeta}>
-                {h.distanceText} • ETA {h.etaMinutes} mins • {h.phone}
-              </Text>
-            </View>
-            <Text style={styles.standbyArrow}>🗺️</Text>
-          </TouchableOpacity>
-        ))}
+        {nearbyHospitals.length === 0 ? (
+          <Text style={styles.hudCardSubtext}>
+            No facilities resolved yet. Hospitals are looked up when an emergency is triggered.
+          </Text>
+        ) : (
+          nearbyHospitals.map((h) => (
+            <TouchableOpacity
+              key={h.id}
+              style={styles.standbyItem}
+              onPress={() => openHospitalMap(h.googleMapsUrl)}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.standbyName}>{h.name}</Text>
+                <Text style={styles.standbyMeta}>
+                  {h.distanceText} • ~{h.etaMinutes} min drive • {h.phone}
+                </Text>
+              </View>
+              <Text style={styles.standbyArrow}>🗺️</Text>
+            </TouchableOpacity>
+          ))
+        )}
       </View>
     </ScrollView>
   );
@@ -1092,7 +1060,7 @@ export default function App(): React.JSX.Element {
         <View style={styles.hashPreviewBox}>
           <Text style={styles.hashPreviewLabel}>SHA-256 TAMPER-PROOF DIGEST</Text>
           <Text style={styles.hashPreviewValue}>
-            {hash || 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'}
+            {hash || 'No record yet — trigger an emergency to generate one'}
           </Text>
         </View>
         <Text style={styles.hudCardSubtext}>
@@ -1161,14 +1129,14 @@ export default function App(): React.JSX.Element {
 
             <View style={styles.certDataBox}>
               <Text style={styles.certDataLabel}>DISPATCHED FACILITY</Text>
-              <Text style={styles.certDataValue}>{primaryHospital.name}</Text>
+              <Text style={styles.certDataValue}>{primaryHospital?.name || 'Not resolved'}</Text>
             </View>
 
             {/* Cryptographic Hash Box */}
             <View style={styles.certHashCard}>
               <Text style={styles.certHashLabel}>CRYPTOGRAPHIC HASH (SHA-256)</Text>
               <Text style={styles.certHashText}>
-                {hash || '593465F5FBFAC42984AB22116B6AD6BA21F854E93BDDE70E03EEC6CC0D7609B5'}
+                {hash || 'Not yet generated'}
               </Text>
             </View>
 
@@ -1275,7 +1243,8 @@ export default function App(): React.JSX.Element {
           userProfile={currentUser}
           onLogout={handleLogout}
           onInspectCertificate={(inc: EmergencyIncidentItem) => {
-            setIncidentId(inc.incidentCode);
+            setIncidentId(inc.id);
+            setIncidentCode(inc.incidentCode);
             setCoordinates({ lat: inc.lat, lng: inc.lng });
             setHash(inc.sha256Hash);
             setTimestamp(inc.timestamp);
@@ -2343,5 +2312,56 @@ const styles = StyleSheet.create({
   } as TextStyle,
   navTabLabelActive: {
     color: '#8ed5ff',
+  } as TextStyle,
+
+  radarEmptyBox: {
+    backgroundColor: '#0d1424',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  } as ViewStyle,
+  radarEmptyText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    lineHeight: 17,
+  } as TextStyle,
+
+  hospitalCadCardEmpty: {
+    backgroundColor: '#1a0c10',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
+  } as ViewStyle,
+  hospitalEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#fca5a5',
+    letterSpacing: 1,
+    marginBottom: 6,
+    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+  } as TextStyle,
+  hospitalEmptyText: {
+    fontSize: 12,
+    color: '#e2e8f0',
+    lineHeight: 18,
+    marginBottom: 14,
+  } as TextStyle,
+
+  transmissionErrorBanner: {
+    backgroundColor: '#3b1216',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
+  } as ViewStyle,
+  transmissionErrorText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#fca5a5',
+    lineHeight: 18,
   } as TextStyle,
 });

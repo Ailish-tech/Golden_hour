@@ -23,13 +23,21 @@ interface SOSRequestBody {
   lng?: number;
 }
 
+type ReporterRole = 'PRIMARY_REPORTER' | 'SECONDARY_REPORTER';
+
 interface SOSSuccessResponse {
   status: 'success';
+  incidentId: string;
+  incidentCode: string;
+  role: ReporterRole;
+  message: string;
+  reporterCount: number;
   hash: string;
   timestamp: string;
-  userId: string;
   coordinates: { lat: number; lng: number };
   pdfBase64: string;
+  nearestHospital: HospitalInfo | null;
+  backupHospitals: HospitalInfo[];
 }
 
 interface SOSErrorResponse {
@@ -37,17 +45,16 @@ interface SOSErrorResponse {
   message: string;
 }
 
+type SOSResponse = SOSSuccessResponse | SOSErrorResponse;
+
 interface LegalShieldParams {
   userId: string;
   lat: number;
   lng: number;
   timestamp: string;
   hash: string;
-}
-
-interface DispatchRequestBody {
-  lat?: number;
-  lng?: number;
+  hospitalName?: string;
+  verifyUrl: string;
 }
 
 interface HospitalInfo {
@@ -61,50 +68,20 @@ interface HospitalInfo {
   distanceKm: number;
   distanceText: string;
   etaMinutes: number;
-  ambulanceUnit: string;
-  transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED';
-  bedsAvailable: number;
+  ambulanceUnit?: string;
+  bedsAvailable: number | null;
   googleMapsUrl: string;
 }
-
-interface SOSSuccessResponse {
-  status: 'success';
-  hash: string;
-  timestamp: string;
-  userId: string;
-  coordinates: {
-    lat: number;
-    lng: number;
-  };
-  pdfBase64: string;
-  nearestHospital: HospitalInfo;
-  backupHospitals: HospitalInfo[];
-}
-
-interface DispatchMergedResponse {
-  status: 'merged';
-  incidentId: string;
-  role: 'SECONDARY_REPORTER';
-  message: string;
-  reporterCount: number;
-  nearestHospital: HospitalInfo;
-  backupHospitals: HospitalInfo[];
-}
-
-interface DispatchCreatedResponse {
-  status: 'created';
-  incidentId: string;
-  role: 'PRIMARY_REPORTER';
-  message: string;
-  nearestHospital: HospitalInfo;
-  backupHospitals: HospitalInfo[];
-}
-
-type DispatchResponse = DispatchMergedResponse | DispatchCreatedResponse | SOSErrorResponse;
 
 // ---------------------------------------------------------------------------
 // Hospital Registry & CAD Spatial Routing Engine
 // ---------------------------------------------------------------------------
+/**
+ * Regional fallback registry, used only when the live lookup is unavailable
+ * AND the caller is actually within range of these facilities. Bed counts are
+ * deliberately absent: this file cannot know a hospital's live capacity, and
+ * inventing one would route a responder on a number nobody verified.
+ */
 const EMERGENCY_HOSPITALS = [
   {
     id: 'HOSP-01',
@@ -114,8 +91,6 @@ const EMERGENCY_HOSPITALS = [
     traumaLevel: 'Level 1 Apex Critical Trauma Center',
     lat: 26.8924,
     lng: 75.8150,
-    bedsAvailable: 18,
-    ambulanceUnit: 'ALS Mobile Unit #108-ALPHA',
   },
   {
     id: 'HOSP-02',
@@ -125,8 +100,6 @@ const EMERGENCY_HOSPITALS = [
     traumaLevel: 'Level 1 Comprehensive Trauma Care',
     lat: 26.8530,
     lng: 75.8140,
-    bedsAvailable: 9,
-    ambulanceUnit: 'ICU Mobile Unit #108-BRAVO',
   },
   {
     id: 'HOSP-03',
@@ -136,21 +109,15 @@ const EMERGENCY_HOSPITALS = [
     traumaLevel: 'Level 2 Cardiac & Trauma Care',
     lat: 26.8480,
     lng: 75.8080,
-    bedsAvailable: 12,
-    ambulanceUnit: 'Rapid Response Unit #108-CHARLIE',
-  },
-  {
-    id: 'HOSP-04',
-    name: 'City Central Trauma & Critical Care Hospital',
-    address: 'Station Road, Emergency Response Corridor',
-    phone: '112 / +91-141-2367800',
-    traumaLevel: 'Level 1 24/7 Critical Response',
-    lat: 26.9200,
-    lng: 75.7900,
-    bedsAvailable: 24,
-    ambulanceUnit: 'ALS Mobile Unit #108-DELTA',
   },
 ];
+
+/**
+ * Beyond this distance the regional registry is not a plausible answer, so we
+ * report that no facility was located instead of routing someone hundreds of
+ * kilometres away to a hospital that merely happens to be in the list.
+ */
+const REGISTRY_MAX_RADIUS_KM = 60;
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth radius in km
@@ -209,15 +176,15 @@ async function fetchLiveOSMHospitals(userLat: number, userLng: number): Promise<
                 name: rawName,
                 address: street,
                 phone,
-                traumaLevel: 'Live Verified Hospital (OSM)',
+                traumaLevel: 'Listed hospital (OpenStreetMap)',
                 lat: hLat,
                 lng: hLng,
                 distanceKm: dist,
                 distanceText: distText,
                 etaMinutes: eta,
-                ambulanceUnit: `CAD Unit #${(Math.abs(el.id) % 900) + 100}`,
-                transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED',
-                bedsAvailable: (Math.abs(el.id) % 15) + 6,
+                // Capacity and ambulance assignment are not knowable from map
+                // data. They stay empty until a hospital desk reports them.
+                bedsAvailable: null,
                 googleMapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${hLat},${hLng}`,
               });
             }
@@ -246,39 +213,52 @@ async function fetchLiveOSMHospitals(userLat: number, userLng: number): Promise<
   });
 }
 
-async function getNearestHospitals(userLat: number, userLng: number): Promise<{ primaryHospital: HospitalInfo; backupHospitals: HospitalInfo[] }> {
+async function getNearestHospitals(
+  userLat: number,
+  userLng: number
+): Promise<{ primaryHospital: HospitalInfo | null; backupHospitals: HospitalInfo[] }> {
   try {
     const liveHospitals = await fetchLiveOSMHospitals(userLat, userLng);
     if (liveHospitals && liveHospitals.length > 0) {
-      console.log(`🏥 [Live OSM] Found ${liveHospitals.length} actual hospitals near [${userLat}, ${userLng}]! Closest: ${liveHospitals[0].name} (${liveHospitals[0].distanceText})`);
+      console.log(
+        `🏥 [Live] ${liveHospitals.length} hospitals near [${userLat}, ${userLng}] — closest: ${liveHospitals[0].name} (${liveHospitals[0].distanceText})`
+      );
       return {
         primaryHospital: liveHospitals[0],
         backupHospitals: liveHospitals.slice(1, 4),
       };
     }
   } catch (err) {
-    console.warn('Live OSM query failed, using regional database fallback:', err);
+    console.warn('Live hospital lookup failed, trying regional registry:', err);
   }
 
-  // Fallback to regional hospital registry
-  const sorted: HospitalInfo[] = EMERGENCY_HOSPITALS.map(h => {
+  // Regional registry fallback — only meaningful if the caller is near it.
+  const sorted: HospitalInfo[] = EMERGENCY_HOSPITALS.map((h) => {
     const dist = getDistanceKm(userLat, userLng, h.lat, h.lng);
     const eta = Math.max(3, Math.round(dist * 2.2 + 2));
     const distText = dist < 1 ? `${Math.round(dist * 1000)} m away` : `${dist.toFixed(1)} km away`;
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}`;
     return {
       ...h,
       distanceKm: dist,
       distanceText: distText,
       etaMinutes: eta,
-      transmissionStatus: 'LIVE_TRANSMISSION_CONFIRMED' as const,
-      googleMapsUrl: mapsUrl,
+      bedsAvailable: null,
+      googleMapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}`,
     };
   }).sort((a, b) => a.distanceKm - b.distanceKm);
 
+  const inRange = sorted.filter((h) => h.distanceKm <= REGISTRY_MAX_RADIUS_KM);
+
+  if (inRange.length === 0) {
+    console.warn(
+      `⚠️  No hospital located for [${userLat}, ${userLng}] — live lookup unavailable and the caller is outside the regional registry.`
+    );
+    return { primaryHospital: null, backupHospitals: [] };
+  }
+
   return {
-    primaryHospital: sorted[0],
-    backupHospitals: sorted.slice(1, 3),
+    primaryHospital: inRange[0],
+    backupHospitals: inRange.slice(1, 3),
   };
 }
 
@@ -286,9 +266,12 @@ async function getNearestHospitals(userLat: number, userLng: number): Promise<{ 
 // App Setup
 // ---------------------------------------------------------------------------
 const app = express();
-const PORT: number = 3000;
+const PORT: number = Number(process.env.PORT) || 3000;
 const MONGO_URI: string = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/samaritan-shield';
 const DEDUP_RADIUS_METERS: number = 150;
+
+// Origin printed on certificates so their digest can be checked independently.
+const PUBLIC_BASE_URL: string = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
 
 // ---------------------------------------------------------------------------
 // Middleware
@@ -391,56 +374,133 @@ app.post('/api/auth/sync', requireAuth, async (req: Request, res: Response): Pro
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/sos — Core Emergency Endpoint
+// POST /api/sos — the single emergency write path
+//
+// This previously ran as two endpoints the client called in parallel:
+// /api/sos hashed and rendered a certificate but persisted nothing, while
+// /api/dispatch created the incident. The digest on a responder's certificate
+// therefore existed only in their app's memory, and the hospital saw a
+// different digest recomputed from createdAt. Both also queried Overpass, so
+// one button press cost two upstream lookups.
+//
+// One call now: dedup, create-or-merge, hash, persist, route, render.
 // ---------------------------------------------------------------------------
-app.post('/api/sos', requireAuth, async (req: Request<{}, SOSSuccessResponse | SOSErrorResponse, SOSRequestBody>, res: Response<SOSSuccessResponse | SOSErrorResponse>): Promise<void> => {
+app.post('/api/sos', requireAuth, async (req: Request<{}, SOSResponse, SOSRequestBody>, res: Response<SOSResponse>): Promise<void> => {
   try {
-    // 1. Extract payload — ZERO CLIENT TRUST on identity or timestamps
     const { lat, lng } = req.body;
+    const reporterId: string = req.user!.uid;
 
-    if (lat == null || lng == null) {
+    // --- Input validation ---
+    if (lat == null || lng == null || typeof lat !== 'number' || typeof lng !== 'number') {
       res.status(400).json({
         status: 'error',
-        message: 'Missing required fields: lat, lng',
+        message: 'Missing or invalid required fields: lat, lng (must be numbers)',
       });
       return;
     }
 
-    const safeUserId: string = req.user!.uid;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      res.status(400).json({
+        status: 'error',
+        message: 'Coordinates out of range: lat [-90,90], lng [-180,180]',
+      });
+      return;
+    }
 
-    // 2. Server-authoritative UTC timestamp
+    // --- Server-authoritative timestamp and digest -------------------------
+    // Nothing here is taken from the client: not the identity, not the clock.
     const timestamp: string = new Date().toISOString();
+    const hash: string = crypto
+      .createHash('sha256')
+      .update(`${reporterId}|${lat}|${lng}|${timestamp}`)
+      .digest('hex');
 
-    // 3. Cryptographic SHA-256 hash (userId + lat + lng + timestamp)
-    const hashPayload: string = `${safeUserId}|${lat}|${lng}|${timestamp}`;
-    const hash: string = crypto.createHash('sha256').update(hashPayload).digest('hex');
-
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🚨  SOS RECEIVED');
-    console.log(`    User:      ${safeUserId}`);
-    console.log(`    Location:  ${lat}, ${lng}`);
-    console.log(`    Time:      ${timestamp}`);
-    console.log(`    SHA-256:   ${hash}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-    // 4. Compute live nearest hospital routing telemetry
+    // --- Route once, and reuse for both the record and the response --------
     const { primaryHospital, backupHospitals } = await getNearestHospitals(lat, lng);
 
-    // 5. Generate Legal Shield PDF in memory
-    const pdfBase64: string = await generateLegalShieldPDF({
-      userId: safeUserId,
-      lat,
-      lng,
-      timestamp,
-      hash,
+    // --- Spatial dedup: is this the same emergency someone already reported? ---
+    const existingIncident: IIncident | null = await Incident.findOne({
+      status: { $in: ['REPORTED', 'AMBULANCE_DISPATCHED', 'ICU_RESERVED'] },
+      location: {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [lng, lat] },
+          $maxDistance: DEDUP_RADIUS_METERS,
+        },
+      },
     });
 
-    // 6. Respond with full cryptographic proof & live hospital telemetry
-    res.json({
+    let incident: IIncident;
+    let role: ReporterRole;
+    let message: string;
+
+    if (existingIncident) {
+      role = existingIncident.primaryReporterId === reporterId ? 'PRIMARY_REPORTER' : 'SECONDARY_REPORTER';
+
+      if (
+        role === 'SECONDARY_REPORTER' &&
+        !existingIncident.secondaryReporters.includes(reporterId)
+      ) {
+        existingIncident.secondaryReporters.push(reporterId);
+      }
+
+      // Each responder gets their own certificate record; re-pressing SOS
+      // reuses the one already issued rather than minting a second digest.
+      if (!existingIncident.certificates.some((c) => c.reporterId === reporterId)) {
+        existingIncident.certificates.push({ reporterId, hash, issuedAt: new Date(timestamp) });
+      }
+
+      await existingIncident.save();
+      incident = existingIncident;
+      message =
+        role === 'SECONDARY_REPORTER'
+          ? 'Help is already en route. Please follow first-aid instructions.'
+          : 'Your existing report is active. Continue first aid.';
+    } else {
+      incident = await Incident.create({
+        location: { type: 'Point', coordinates: [lng, lat] },
+        status: 'REPORTED',
+        primaryReporterId: reporterId,
+        secondaryReporters: [],
+        victimCondition: 'CRITICAL_UNCONSCIOUS',
+        assignedHospitalId: primaryHospital?.id,
+        assignedHospitalName: primaryHospital?.name,
+        certificates: [{ reporterId, hash, issuedAt: new Date(timestamp) }],
+      });
+      role = 'PRIMARY_REPORTER';
+      message = 'Emergency recorded and shared with the hospital desk. Initiating voice triage.';
+    }
+
+    // The digest this responder's certificate carries — which is the one now
+    // stored, so it can be checked against GET /api/verify/:hash.
+    const certificate = incident.certificates.find((c) => c.reporterId === reporterId)!;
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`🚨  SOS ${role === 'PRIMARY_REPORTER' ? 'RECORDED' : 'MERGED'}`);
+    console.log(`    Incident:  ${incident._id}`);
+    console.log(`    Reporter:  ${reporterId}`);
+    console.log(`    Location:  ${lat}, ${lng}`);
+    console.log(`    SHA-256:   ${certificate.hash}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    const pdfBase64: string = await generateLegalShieldPDF({
+      userId: reporterId,
+      lat,
+      lng,
+      timestamp: certificate.issuedAt.toISOString(),
+      hash: certificate.hash,
+      hospitalName: incident.assignedHospitalName || primaryHospital?.name,
+      verifyUrl: `${PUBLIC_BASE_URL}/api/verify/${certificate.hash}`,
+    });
+
+    res.status(existingIncident ? 200 : 201).json({
       status: 'success',
-      hash,
-      timestamp,
-      userId: safeUserId,
+      incidentId: String(incident._id),
+      incidentCode: `CAD-${String(incident._id).slice(-4).toUpperCase()}`,
+      role,
+      message,
+      reporterCount: 1 + incident.secondaryReporters.length,
+      hash: certificate.hash,
+      timestamp: certificate.issuedAt.toISOString(),
       coordinates: { lat, lng },
       pdfBase64,
       nearestHospital: primaryHospital,
@@ -461,7 +521,7 @@ app.post('/api/sos', requireAuth, async (req: Request<{}, SOSSuccessResponse | S
 // ---------------------------------------------------------------------------
 // PDF Generation — Ultra-Professional Good Samaritan Legal Shield Certificate
 // ---------------------------------------------------------------------------
-async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash }: LegalShieldParams): Promise<string> {
+async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash, hospitalName, verifyUrl }: LegalShieldParams): Promise<string> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595.28, 841.89]); // Standard A4
 
@@ -577,7 +637,7 @@ async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash }: Leg
     ['First Responder ID', `${userId} (Verified Good Samaritan)`],
     ['Emergency Coordinates', `Lat ${lat.toFixed(6)}, Lng ${lng.toFixed(6)} (GPS Verified)`],
     ['Server UTC Timestamp', `${timestamp} (Authoritative Zero-Trust)`],
-    ['CAD Dispatch Hospital', 'City Central Trauma Center & Emergency Response Unit #108'],
+    ['Routed Hospital', hospitalName || 'No facility located — call 108'],
     ['First-Aid Protocol', 'DRSABC Emergency Life Support & Voice Triage Conducted'],
   ];
 
@@ -755,117 +815,45 @@ async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash }: Leg
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/dispatch — Spatial Deduplication & CAD Routing
+// GET /api/verify/:hash — public integrity check
+//
+// A certificate's value rests on someone being able to check it. This returns
+// only what confirms the record exists and is unmodified: no coordinates, no
+// responder identity, no victim condition.
 // ---------------------------------------------------------------------------
-app.post('/api/dispatch', requireAuth, async (req: Request<{}, DispatchResponse, DispatchRequestBody>, res: Response<DispatchResponse>): Promise<void> => {
+app.get('/api/verify/:hash', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { lat, lng } = req.body;
+    const hash = String(req.params.hash || '').toLowerCase();
 
-    // --- Input validation ---
-    if (lat == null || lng == null || typeof lat !== 'number' || typeof lng !== 'number') {
-      res.status(400).json({
-        status: 'error',
-        message: 'Missing or invalid required fields: lat, lng (must be numbers)',
+    if (!/^[a-f0-9]{64}$/.test(hash)) {
+      res.status(400).json({ status: 'error', message: 'Not a valid SHA-256 digest.' });
+      return;
+    }
+
+    const incident = await Incident.findOne({ 'certificates.hash': hash }).lean();
+    if (!incident) {
+      res.status(404).json({
+        status: 'not_found',
+        verified: false,
+        message: 'No emergency record matches this digest.',
       });
       return;
     }
 
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      res.status(400).json({
-        status: 'error',
-        message: 'Coordinates out of range: lat [-90,90], lng [-180,180]',
-      });
-      return;
-    }
+    const certificate = incident.certificates.find((c) => c.hash === hash)!;
 
-    const safeUserId: string = req.user!.uid;
-
-    // --- Spatial dedup: find active incident within 150m ---
-    const existingIncident: IIncident | null = await Incident.findOne({
-      status: { $in: ['REPORTED', 'AMBULANCE_DISPATCHED'] },
-      location: {
-        $near: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [lng, lat], // MongoDB: [longitude, latitude]
-          },
-          $maxDistance: DEDUP_RADIUS_METERS,
-        },
-      },
+    res.json({
+      status: 'success',
+      verified: true,
+      incidentCode: `CAD-${String(incident._id).slice(-4).toUpperCase()}`,
+      issuedAt: certificate.issuedAt.toISOString(),
+      recordedAt: incident.createdAt.toISOString(),
+      routedHospital: incident.assignedHospitalName,
+      message: 'This digest matches an emergency record held by Samaritan Shield.',
     });
-
-    // --- ROUTING TREE ---
-    if (existingIncident) {
-      // MATCH FOUND → Merge as secondary reporter
-      // Avoid duplicate entries in secondaryReporters
-      if (!existingIncident.secondaryReporters.includes(safeUserId) &&
-          existingIncident.primaryReporterId !== safeUserId) {
-        existingIncident.secondaryReporters.push(safeUserId);
-        await existingIncident.save();
-      }
-
-      const totalReporters: number =
-        1 + existingIncident.secondaryReporters.length;
-
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('📡  DISPATCH — MERGED (Duplicate Report)');
-      console.log(`    Incident:   ${existingIncident._id}`);
-      console.log(`    Merged:     ${safeUserId}`);
-      console.log(`    Reporters:  ${totalReporters}`);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-      const { primaryHospital, backupHospitals } = await getNearestHospitals(lat, lng);
-
-      res.json({
-        status: 'merged',
-        incidentId: String(existingIncident._id),
-        role: 'SECONDARY_REPORTER',
-        message: 'Help is already en route. Please follow first-aid instructions.',
-        reporterCount: totalReporters,
-        nearestHospital: primaryHospital,
-        backupHospitals,
-      });
-    } else {
-      // NO MATCH → Create new incident
-      const { primaryHospital, backupHospitals } = await getNearestHospitals(lat, lng);
-
-      const newIncident: IIncident = await Incident.create({
-        location: {
-          type: 'Point',
-          coordinates: [lng, lat], // MongoDB: [longitude, latitude]
-        },
-        status: 'REPORTED',
-        primaryReporterId: safeUserId,
-        secondaryReporters: [],
-        victimCondition: 'CRITICAL_UNCONSCIOUS',
-        assignedHospitalId: primaryHospital.id,
-        assignedHospitalName: primaryHospital.name,
-        phone: '+91-98765-43210',
-      });
-
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('🚨  DISPATCH — NEW INCIDENT CREATED');
-      console.log(`    Incident:   ${newIncident._id}`);
-      console.log(`    Reporter:   ${safeUserId}`);
-      console.log(`    Location:   [${lng}, ${lat}]`);
-      console.log(`    Hospital:   ${primaryHospital.name}`);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-      res.status(201).json({
-        status: 'created',
-        incidentId: String(newIncident._id),
-        role: 'PRIMARY_REPORTER',
-        message: 'Ambulance alerted. Initiating voice triage.',
-        nearestHospital: primaryHospital,
-        backupHospitals,
-      });
-    }
   } catch (err: unknown) {
-    console.error('❌ Dispatch endpoint error:', err);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error while processing dispatch.',
-    });
+    console.error('❌ Verify error:', err);
+    res.status(500).json({ status: 'error', message: 'Verification failed.' });
   }
 });
 
@@ -953,7 +941,7 @@ app.get('/api/incidents/:id', requireAuth, async (req: Request, res: Response): 
         icuBedReserved: incident.icuBedReserved,
         assignedHospitalId: incident.assignedHospitalId,
         assignedHospitalName: incident.assignedHospitalName,
-        hash: incident.hash,
+        hash: incident.certificates.find((c) => c.reporterId === callerUid)?.hash,
         createdAt: incident.createdAt.toISOString(),
         updatedAt: incident.updatedAt.toISOString(),
       },
@@ -1008,14 +996,12 @@ app.get('/api/hospital/incidents', requireHospital, async (req: Request, res: Re
         status: statusMapped,
         cprCompressions: inc.cprCompressions || 0,
         cprSets: inc.cprSets || 1,
-        ambulanceUnitAssigned: inc.ambulanceUnitAssigned || (inc.status === 'AMBULANCE_DISPATCHED' ? 'ALS Unit #108-ALPHA (Dispatched)' : undefined),
-        sha256Hash:
-          inc.hash ||
-          crypto
-            .createHash('sha256')
-            .update(`${inc.primaryReporterId}|${incLat}|${incLng}|${inc.createdAt.toISOString()}`)
-            .digest('hex'),
-        phone: inc.phone || '+91-98765-43210',
+        ambulanceUnitAssigned: inc.ambulanceUnitAssigned,
+        // The digest the primary responder's certificate actually carries.
+        // This used to be recomputed from createdAt when no hash was stored —
+        // which was always — so it never matched the certificate they held.
+        sha256Hash: inc.certificates.find((c) => c.reporterId === inc.primaryReporterId)?.hash,
+        reporterCount: 1 + (inc.secondaryReporters?.length || 0),
         googleMapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${incLat},${incLng}`,
       };
     });

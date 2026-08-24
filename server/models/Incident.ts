@@ -10,6 +10,13 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 export type IncidentStatus = 'REPORTED' | 'AMBULANCE_DISPATCHED' | 'ICU_RESERVED' | 'RESOLVED';
 export type VictimCondition = 'CRITICAL_UNCONSCIOUS' | 'CPR_ACTIVE' | 'AIRWAY_OBSTRUCTED' | 'RECOVERY_POSITION' | 'BLEEDING_TRAUMA' | 'BLEEDING_CONTROLLED';
 
+/** A Good Samaritan's certificate record for an incident. */
+export interface ICertificateRecord {
+  reporterId: string;
+  hash: string;
+  issuedAt: Date;
+}
+
 export interface IIncident extends Document {
   location: {
     type: 'Point';
@@ -26,8 +33,12 @@ export interface IIncident extends Document {
   assignedHospitalId?: string;
   assignedHospitalName?: string;
   phone?: string;
-  hash?: string;
-  pdfBase64?: string;
+  /**
+   * One record per responder. Each Good Samaritan who reports this incident
+   * gets their own certificate, so the digest printed on a certificate can be
+   * checked against what the server actually stored.
+   */
+  certificates: ICertificateRecord[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -121,13 +132,18 @@ const IncidentSchema = new Schema<IIncident>(
       default: '+91-98765-43210',
     },
 
-    hash: {
-      type: String,
-      trim: true,
-    },
-
-    pdfBase64: {
-      type: String,
+    certificates: {
+      type: [
+        new Schema<ICertificateRecord>(
+          {
+            reporterId: { type: String, required: true, trim: true },
+            hash: { type: String, required: true, trim: true, index: true },
+            issuedAt: { type: Date, required: true, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
     },
   },
   {
@@ -143,6 +159,9 @@ IncidentSchema.index({ location: '2dsphere' });
 
 // Compound index for the dedup query (status + location)
 IncidentSchema.index({ status: 1, location: '2dsphere' });
+
+// Certificate lookup by digest, for GET /api/verify/:hash
+IncidentSchema.index({ 'certificates.hash': 1 });
 
 // ---------------------------------------------------------------------------
 // Export
