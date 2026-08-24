@@ -19,8 +19,11 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   type UserCredential,
+  type Auth,
 } from 'firebase/auth';
 import { authedJson } from './api';
+import { LOCAL_DEV_AUTH } from './config';
+import { setDevSession, devUidForEmail } from './session';
 
 export type UserRole = 'citizen' | 'hospital';
 
@@ -47,40 +50,44 @@ export interface AppUserProfile {
 // These are public project identifiers, not secrets; access is governed by
 // Firebase Auth and your security rules.
 // ---------------------------------------------------------------------------
-const REQUIRED_FIREBASE_ENV = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_SENDER_ID,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-} as const;
+let auth: Auth | null = null;
 
-const ENV_VAR_NAMES: Record<keyof typeof REQUIRED_FIREBASE_ENV, string> = {
-  apiKey: 'EXPO_PUBLIC_FIREBASE_API_KEY',
-  authDomain: 'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN',
-  projectId: 'EXPO_PUBLIC_FIREBASE_PROJECT_ID',
-  storageBucket: 'EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET',
-  messagingSenderId: 'EXPO_PUBLIC_FIREBASE_SENDER_ID',
-  appId: 'EXPO_PUBLIC_FIREBASE_APP_ID',
-};
+if (!LOCAL_DEV_AUTH) {
+  const REQUIRED_FIREBASE_ENV = {
+    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_SENDER_ID,
+    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  } as const;
 
-const missing = (Object.keys(REQUIRED_FIREBASE_ENV) as Array<keyof typeof REQUIRED_FIREBASE_ENV>)
-  .filter((k) => !REQUIRED_FIREBASE_ENV[k])
-  .map((k) => ENV_VAR_NAMES[k]);
+  const ENV_VAR_NAMES: Record<keyof typeof REQUIRED_FIREBASE_ENV, string> = {
+    apiKey: 'EXPO_PUBLIC_FIREBASE_API_KEY',
+    authDomain: 'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN',
+    projectId: 'EXPO_PUBLIC_FIREBASE_PROJECT_ID',
+    storageBucket: 'EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET',
+    messagingSenderId: 'EXPO_PUBLIC_FIREBASE_SENDER_ID',
+    appId: 'EXPO_PUBLIC_FIREBASE_APP_ID',
+  };
 
-if (missing.length > 0) {
-  throw new Error(
-    `Firebase is not configured. Missing in app/.env:\n  ${missing.join('\n  ')}\n\n` +
-      'Copy these from the Firebase console: Project settings -> General -> Your apps -> Web app -> SDK setup and configuration.\n' +
-      "The project you choose must be the SAME one your backend's service-account key belongs to."
-  );
+  const missing = (Object.keys(REQUIRED_FIREBASE_ENV) as Array<keyof typeof REQUIRED_FIREBASE_ENV>)
+    .filter((k) => !REQUIRED_FIREBASE_ENV[k])
+    .map((k) => ENV_VAR_NAMES[k]);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Firebase is not configured. Missing in app/.env:\n  ${missing.join('\n  ')}\n\n` +
+        'Copy these from the Firebase console: Project settings -> General -> Your apps -> Web app -> SDK setup and configuration.\n' +
+        "The project you choose must be the SAME one your backend's service-account key belongs to."
+    );
+  }
+
+  const firebaseConfig = REQUIRED_FIREBASE_ENV as Record<keyof typeof REQUIRED_FIREBASE_ENV, string>;
+
+  const app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
 }
-
-const firebaseConfig = REQUIRED_FIREBASE_ENV as Record<keyof typeof REQUIRED_FIREBASE_ENV, string>;
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
 
 // ---------------------------------------------------------------------------
 // Error mapping — by code, not by message substring
@@ -155,6 +162,17 @@ export async function syncUserToBackend(
 // ---------------------------------------------------------------------------
 // Email / password
 // ---------------------------------------------------------------------------
+
+/** The Firebase instance, or a clear error if the app is in local dev mode. */
+function requireAuth(): Auth {
+  if (!auth) {
+    throw new Error(
+      'Firebase is not initialised because the app is running in local development mode.'
+    );
+  }
+  return auth;
+}
+
 async function completeSignIn(
   credential: UserCredential,
   coords?: { lat: number; lng: number }
@@ -163,13 +181,36 @@ async function completeSignIn(
   return syncUserToBackend(coords, hint);
 }
 
+/**
+ * Local development sign-in. No password check and no identity verification —
+ * it records who you say you are and lets the backend (which has its own
+ * matching opt-in) take it at face value.
+ *
+ * Role is still resolved server-side from the hospital-staff allowlist, so
+ * hospital access cannot be claimed here any more than it can in production.
+ */
+async function devSignIn(
+  email: string,
+  coords?: { lat: number; lng: number }
+): Promise<AppUserProfile> {
+  const normalized = email.trim().toLowerCase();
+  setDevSession({ uid: devUidForEmail(normalized), email: normalized });
+  try {
+    return await syncUserToBackend(coords);
+  } catch (err) {
+    setDevSession(null); // don't leave a half-signed-in session behind
+    throw err;
+  }
+}
+
 export async function loginWithEmail(
   email: string,
   pass: string,
   coords?: { lat: number; lng: number }
 ): Promise<AppUserProfile> {
+  if (LOCAL_DEV_AUTH) return devSignIn(email, coords);
   try {
-    const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), pass);
+    const credential = await signInWithEmailAndPassword(requireAuth(), email.trim().toLowerCase(), pass);
     return await completeSignIn(credential, coords);
   } catch (err) {
     throw new Error(describeAuthError(err));
@@ -181,8 +222,9 @@ export async function registerWithEmail(
   pass: string,
   coords?: { lat: number; lng: number }
 ): Promise<AppUserProfile> {
+  if (LOCAL_DEV_AUTH) return devSignIn(email, coords);
   try {
-    const credential = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), pass);
+    const credential = await createUserWithEmailAndPassword(requireAuth(), email.trim().toLowerCase(), pass);
     return await completeSignIn(credential, coords);
   } catch (err) {
     throw new Error(describeAuthError(err));
@@ -195,11 +237,16 @@ export async function registerWithEmail(
 export async function loginWithGoogle(
   coords?: { lat: number; lng: number }
 ): Promise<AppUserProfile> {
+  if (LOCAL_DEV_AUTH) {
+    throw new Error(
+      'Google Sign-In needs a Firebase project. This app is running in local development mode — sign in with any email and password instead.'
+    );
+  }
   if (Platform.OS !== 'web') {
     throw new Error('Google Sign-In is only supported on web in this configuration.');
   }
   try {
-    const credential = await signInWithPopup(auth, new GoogleAuthProvider());
+    const credential = await signInWithPopup(requireAuth(), new GoogleAuthProvider());
     return await completeSignIn(credential, coords);
   } catch (err) {
     throw new Error(describeAuthError(err));
@@ -207,8 +254,12 @@ export async function loginWithGoogle(
 }
 
 export async function logoutUser(): Promise<void> {
+  if (LOCAL_DEV_AUTH) {
+    setDevSession(null);
+    return;
+  }
   try {
-    await signOut(auth);
+    if (auth) await signOut(auth);
   } catch (e) {
     console.warn('Logout failed', e);
   }

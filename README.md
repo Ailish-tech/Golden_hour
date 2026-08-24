@@ -43,8 +43,16 @@ end-to-end check, and opens the app.
 ./run.command stop      # stop the MongoDB container it started
 ```
 
-It configures local auth with `ALLOW_INSECURE_NO_AUTH=true` so you can try it
-without a Firebase project. That is development-only — see Setup below.
+**No Firebase project is needed to try it.** The script configures both halves
+for local development: the app mints a local identity and the backend accepts
+it under its matching opt-in. Sign in with any email and a 6+ character
+password; `hospital@local.test` is seeded as a hospital desk so you can see
+both sides.
+
+That is a development stand-in, not authentication — no password is checked and
+no token is verified. The server ignores the flag when `NODE_ENV=production`.
+Setting the `EXPO_PUBLIC_FIREBASE_*` values and dropping
+`EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH` switches both sides back to real Firebase.
 
 ## Prerequisites
 

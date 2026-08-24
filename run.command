@@ -18,6 +18,11 @@ YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
 SERVER_PORT=3000
 MONGO_PORT=27017
 MONGO_CONTAINER=golden-hour-mongo
+HOSPITAL_EMAIL=hospital@local.test
+MONGO_HOME="$HOME/.golden-hour"
+MONGO_DATA="$MONGO_HOME/mongodb"
+MONGO_LOG="$MONGO_HOME/mongod.log"
+MONGO_PIDFILE="$MONGO_HOME/mongod.pid"
 SERVER_PID=""
 
 step()  { printf '\n%s▸ %s%s\n' "$BOLD$BLUE" "$1" "$RESET"; }
@@ -49,11 +54,17 @@ port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "stop" ]; then
   step "Stopping MongoDB"
+  stopped=0
+  if [ -f "$MONGO_PIDFILE" ] && kill -0 "$(cat "$MONGO_PIDFILE")" 2>/dev/null; then
+    kill "$(cat "$MONGO_PIDFILE")" 2>/dev/null && ok "Stopped mongod (pid $(cat "$MONGO_PIDFILE"))."
+    rm -f "$MONGO_PIDFILE"
+    stopped=1
+  fi
   if command -v docker >/dev/null 2>&1 && docker ps -q -f name="$MONGO_CONTAINER" | grep -q .; then
     docker stop "$MONGO_CONTAINER" >/dev/null && ok "Container stopped."
-  else
-    warn "No $MONGO_CONTAINER container running."
+    stopped=1
   fi
+  [ "$stopped" -eq 0 ] && warn "Nothing to stop."
   exit 0
 fi
 
@@ -115,6 +126,23 @@ HELP
 if port_busy "$MONGO_PORT"; then
   ok "Already running — using it."
 
+elif command -v mongod >/dev/null 2>&1; then
+  # Run the binary directly rather than through a service manager. Homebrew's
+  # launch agent can report success while mongod dies immediately, which hides
+  # the real error behind a service that claims to be running.
+  mkdir -p "$MONGO_DATA" "$MONGO_HOME"
+  mongod --dbpath "$MONGO_DATA" --port "$MONGO_PORT" \
+         --fork --logpath "$MONGO_LOG" --pidfilepath "$MONGO_PIDFILE" >/dev/null 2>&1
+  if ! wait_for_mongo 25; then
+    printf '\n'
+    [ -f "$MONGO_LOG" ] && tail -20 "$MONGO_LOG"
+    die "MongoDB would not start.
+     Data directory: $MONGO_DATA
+     Log:            $MONGO_LOG
+$(mongo_help)"
+  fi
+  ok "Started mongod (data in $MONGO_DATA)."
+
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   if docker ps -aq -f name="$MONGO_CONTAINER" | grep -q .; then
     docker start "$MONGO_CONTAINER" >/dev/null || die "Could not start the $MONGO_CONTAINER container."
@@ -165,8 +193,14 @@ else
 fi
 
 if [ ! -f app/.env ]; then
-  cp app/.env.example app/.env
-  ok "Created app/.env."
+  # Configured for a local run: no Firebase project needed. The app mints a
+  # local identity and the backend accepts it under its matching opt-in.
+  cat > app/.env <<'APPENV'
+EXPO_PUBLIC_API_URL=http://localhost:3000
+EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH=true
+APPENV
+  ok "Created app/.env (local sign-in — no Firebase project needed)."
+  warn "For real use, set the EXPO_PUBLIC_FIREBASE_* values and remove EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH."
 else
   ok "app/.env exists."
 fi
@@ -248,6 +282,19 @@ HEALTH=$(curl -fsS "http://localhost:$SERVER_PORT/api/health" 2>/dev/null) \
 ok "Backend healthy — $HEALTH"
 
 # ---------------------------------------------------------------------------
+# 6b. Hospital desk account
+# ---------------------------------------------------------------------------
+step "Provisioning a hospital desk account"
+if ( cd server && npx ts-node scripts/seed-hospital-staff.ts \
+       --email "$HOSPITAL_EMAIL" \
+       --hospitalId HOSP-01 \
+       --hospitalName "Sawai Man Singh (SMS) Government Trauma Hospital" >/dev/null 2>&1 ); then
+  ok "$HOSPITAL_EMAIL can reach the hospital desk."
+else
+  warn "Could not seed the hospital account — the citizen side still works."
+fi
+
+# ---------------------------------------------------------------------------
 # 7. End-to-end check
 # ---------------------------------------------------------------------------
 step "Running the end-to-end check"
@@ -277,25 +324,27 @@ cat <<INFO
   ${BOLD}Backend${RESET}  http://localhost:$SERVER_PORT   ${DIM}(log: .logs/server.log)${RESET}
   ${BOLD}App${RESET}      opening in your browser shortly
 
-  ${BOLD}To try it:${RESET}
-    1. Sign up as a citizen, then press SOS.
-    2. In a second browser profile, sign up again — that account is a
-       citizen too. Hospital access is provisioned deliberately:
+  ${BOLD}Sign in — no account setup needed${RESET}
+    Citizen:   any email address, any password of 6+ characters
+    Hospital:  ${BOLD}$HOSPITAL_EMAIL${RESET}, any password of 6+ characters
 
-         ${DIM}cd server && npx ts-node scripts/seed-hospital-staff.ts \\
-           --email you@example.com \\
-           --hospitalId HOSP-01 \\
-           --hospitalName "SMS Government Trauma Hospital"${RESET}
+  ${BOLD}To see the whole thing work${RESET}
+    1. Sign in as a citizen and press SOS. Note the SHA-256 shown.
+    2. Open a second browser profile (or a private window) and sign in with
+       $HOSPITAL_EMAIL — that is the hospital desk.
+    3. The desk shows the incident. Dispatch a unit; the citizen screen updates.
+    4. Compare the SHA-256 on both. They match, and
+       ${BOLD}http://localhost:$SERVER_PORT/api/verify/<hash>${RESET} confirms the server holds it.
 
-       Sign in again afterwards to pick up the role.
-    3. As the hospital desk, dispatch a unit and watch the citizen's
-       screen update. Compare the SHA-256 on both — they now match.
-    4. Open ${BOLD}http://localhost:$SERVER_PORT/api/verify/<that hash>${RESET} to confirm it.
+  ${DIM}Sign-in here is a local stand-in, not real authentication: no password is
+  checked and no token is verified. Both sides opted into it explicitly and the
+  server ignores the flag when NODE_ENV=production.
 
-  ${DIM}Note: voice triage needs Chrome or Safari for speech. Native speech
-  recognition requires a development build, not Expo Go.${RESET}
+  Voice triage needs Chrome or Safari. Native speech recognition needs a
+  development build, not Expo Go.${RESET}
 
   ${YELLOW}Press Ctrl+C to stop everything.${RESET}
+  ${DIM}MongoDB keeps running; stop it with ./run.command stop${RESET}
 
 INFO
 
