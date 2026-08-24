@@ -180,30 +180,52 @@ fi
 # ---------------------------------------------------------------------------
 step "Checking environment files"
 
+# Add a setting only when the file does not already define it. An existing
+# value is never overwritten -- and creating the file only when absent is not
+# enough, because an .env written by an older version of this script is
+# missing keys the app now requires.
+env_has() { [ -f "$1" ] && grep -qE "^[[:space:]]*$2=" "$1"; }
+
+ensure_env() {
+  local file="$1" key="$2" value="$3"
+  [ -f "$file" ] || : > "$file"
+  if env_has "$file" "$key"; then return 1; fi
+  printf '%s=%s\n' "$key" "$value" >> "$file"
+  return 0
+}
+
+# --- server ---------------------------------------------------------------
 if [ ! -f server/.env ]; then
   cp server/.env.example server/.env
-  # Local verification runs without Firebase. This flag is dev-only: tokens are
-  # read as `uid:email` with no signature check, and the server ignores it when
-  # NODE_ENV=production.
-  printf '\nALLOW_INSECURE_NO_AUTH=true\n' >> server/.env
-  ok "Created server/.env (insecure dev auth — local verification only)."
-  warn "For real use, set FIREBASE_SERVICE_ACCOUNT and remove ALLOW_INSECURE_NO_AUTH."
-else
-  ok "server/.env exists."
+  ok "Created server/.env."
 fi
 
-if [ ! -f app/.env ]; then
-  # Configured for a local run: no Firebase project needed. The app mints a
-  # local identity and the backend accepts it under its matching opt-in.
-  cat > app/.env <<'APPENV'
-EXPO_PUBLIC_API_URL=http://localhost:3000
-EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH=true
-APPENV
-  ok "Created app/.env (local sign-in — no Firebase project needed)."
-  warn "For real use, set the EXPO_PUBLIC_FIREBASE_* values and remove EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH."
+server_added=""
+ensure_env server/.env MONGO_URI "mongodb://127.0.0.1:$MONGO_PORT/samaritan-shield" && server_added="yes"
+ensure_env server/.env PORT "$SERVER_PORT" && server_added="yes"
+
+# Only opt into unverified tokens when no real credentials are configured --
+# appending it alongside a service account would silently downgrade a properly
+# configured server to accepting anything.
+if env_has server/.env FIREBASE_SERVICE_ACCOUNT || env_has server/.env GOOGLE_APPLICATION_CREDENTIALS; then
+  ok "server/.env — using the configured Firebase credentials."
 else
-  ok "app/.env exists."
+  ensure_env server/.env ALLOW_INSECURE_NO_AUTH "true" && server_added="yes"
+  ok "server/.env — local dev auth (tokens are not verified)."
 fi
+[ -n "$server_added" ] && warn "Added missing settings to server/.env."
+
+# --- app ------------------------------------------------------------------
+app_added=""
+ensure_env app/.env EXPO_PUBLIC_API_URL "http://localhost:$SERVER_PORT" && app_added="yes"
+
+if env_has app/.env EXPO_PUBLIC_FIREBASE_API_KEY; then
+  ok "app/.env — using the configured Firebase project."
+else
+  ensure_env app/.env EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH "true" && app_added="yes"
+  ok "app/.env — local sign-in, no Firebase project needed."
+fi
+[ -n "$app_added" ] && warn "Added missing settings to app/.env."
 
 # ---------------------------------------------------------------------------
 # 4. Dependencies
@@ -259,7 +281,29 @@ fi
 step "Starting the backend on port $SERVER_PORT"
 
 if port_busy "$SERVER_PORT"; then
-  die "Port $SERVER_PORT is already in use. Stop that process and try again."
+  # Most often this is a backend from a previous run, started by hand or left
+  # behind by an interrupted one. Reclaim that; refuse to touch anything else.
+  holder_pid=$(lsof -ti:"$SERVER_PORT" -sTCP:LISTEN 2>/dev/null | head -1)
+  holder_cmd=$(ps -p "${holder_pid:-0}" -o command= 2>/dev/null || true)
+
+  case "$holder_cmd" in
+    *server.ts*|*dist/server.js*|*samaritan*)
+      warn "Reclaiming port $SERVER_PORT from an earlier backend (pid $holder_pid)."
+      kill "$holder_pid" 2>/dev/null
+      for _ in $(seq 1 10); do
+        port_busy "$SERVER_PORT" || break
+        sleep 1
+      done
+      port_busy "$SERVER_PORT" && kill -9 "$holder_pid" 2>/dev/null && sleep 1
+      port_busy "$SERVER_PORT" && die "Could not free port $SERVER_PORT (pid $holder_pid)."
+      ;;
+    *)
+      die "Port $SERVER_PORT is in use by something else:
+       pid $holder_pid — ${holder_cmd:-unknown}
+
+     Stop it, or set PORT in server/.env to a free port."
+      ;;
+  esac
 fi
 
 mkdir -p .logs
@@ -348,4 +392,7 @@ cat <<INFO
 
 INFO
 
-cd app && npm run web
+# --clear resets Metro's cache. EXPO_PUBLIC_* values are inlined at build time,
+# so a bundle cached before .env changed keeps serving the old values — which
+# looks exactly like the setting being ignored.
+cd app && npx expo start --web --clear

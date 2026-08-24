@@ -19,6 +19,7 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { AUTH_MODE } from './config';
 import {
   loginWithEmail,
   registerWithEmail,
@@ -128,6 +129,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           National Emergency CAD & Good Samaritan Legal Protection System
         </Text>
       </View>
+
+      {AUTH_MODE === 'local' && (
+        <View style={styles.localAuthBanner}>
+          <Text style={styles.localAuthTitle}>LOCAL SIGN-IN MODE</Text>
+          <Text style={styles.localAuthText}>
+            Firebase is not configured, so passwords are not checked and identities are not
+            verified. Sign in with any email and a 6+ character password.
+          </Text>
+        </View>
+      )}
 
       {/* GPS Status Indicator */}
       <View style={styles.gpsCard}>
@@ -350,6 +361,27 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // GPS Status Card
+  localAuthBanner: {
+    backgroundColor: '#3b2405',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#eab308',
+  } as ViewStyle,
+  localAuthTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#facc15',
+    letterSpacing: 1,
+    marginBottom: 5,
+  } as TextStyle,
+  localAuthText: {
+    fontSize: 11,
+    color: '#fde68a',
+    lineHeight: 16,
+  } as TextStyle,
+
   gpsCard: {
     backgroundColor: '#0f172a',
     borderRadius: 10,

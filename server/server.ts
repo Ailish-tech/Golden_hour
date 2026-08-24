@@ -294,9 +294,34 @@ const CORS_ORIGINS: string[] = (process.env.CORS_ORIGINS || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
+/**
+ * Whether a browser origin may call this API.
+ *
+ * A request with no Origin header — a native client, curl, a server-to-server
+ * call — is not subject to CORS and is allowed through.
+ *
+ * In local development any localhost port is accepted. Expo moves to 8082,
+ * 8083 and onward whenever its preferred port is taken, and a fixed allowlist
+ * turns that into a CORS rejection that surfaces in the app as an unexplained
+ * network failure. This widening applies only when the server is already
+ * running with unverified tokens, so it grants nothing a deployed instance
+ * would not already refuse.
+ */
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (CORS_ORIGINS.includes(origin)) return true;
+  if (
+    getAuthMode() === 'insecure-dev' &&
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 app.use(
   cors({
-    origin: CORS_ORIGINS.length > 0 ? CORS_ORIGINS : false,
+    origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
     credentials: true,
   })
 );

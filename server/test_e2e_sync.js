@@ -10,8 +10,11 @@
 
 const http = require('http');
 
+// The hospital identity must use the email that was allowlisted, since the
+// server resolves the role from that allowlist and not from the token.
+const HOSPITAL_EMAIL = process.env.HOSPITAL_EMAIL || 'hospital@local.test';
 const CITIZEN = process.env.CITIZEN_TOKEN || 'citizen-uid-001:responder@example.org';
-const HOSPITAL = process.env.HOSPITAL_TOKEN || 'hospital-uid-001:trauma.cad@hospital.org';
+const HOSPITAL = process.env.HOSPITAL_TOKEN || `hospital-uid-001:${HOSPITAL_EMAIL}`;
 
 function request(method, path, token, payload) {
   return new Promise((resolve, reject) => {
@@ -52,7 +55,22 @@ function check(label, condition, detail) {
 }
 
 async function run() {
-  console.log('--- 1. Unauthenticated calls are rejected ---');
+  // Register both identities first. requireHospital reads the role from the
+  // User collection, and that row is only created by /api/auth/sync -- which
+  // is what the app calls on login. Skipping it left no user to find, so the
+  // hospital desk was refused no matter what the allowlist said.
+  console.log('--- 0. Register both identities (what the app does at login) ---');
+  const citizenSync = await request('POST', '/api/auth/sync', CITIZEN, {});
+  console.log(`   citizen  -> role ${citizenSync.body?.user?.role}`);
+  const hospitalSync = await request('POST', '/api/auth/sync', HOSPITAL, {});
+  console.log(`   hospital -> role ${hospitalSync.body?.user?.role} (${HOSPITAL_EMAIL})`);
+  check(
+    'hospital account resolved to the hospital role',
+    hospitalSync.body?.user?.role === 'hospital',
+    `got "${hospitalSync.body?.user?.role}" — is ${HOSPITAL_EMAIL} allowlisted?`
+  );
+
+  console.log('\n--- 1. Unauthenticated calls are rejected ---');
   const anon = await request('GET', '/api/hospital/incidents', '');
   check('hospital feed rejects a missing token', anon.status === 401, `got ${anon.status}`);
 

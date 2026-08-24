@@ -32,27 +32,61 @@ stored record, checkable at `/api/verify/:hash`.
 
 ## Quick start
 
-On macOS, double-click **`run.command`** (or run `./run.command`). It checks
-prerequisites, starts MongoDB, creates the `.env` files, installs
-dependencies, runs typecheck and tests, boots the backend, runs the
-end-to-end check, and opens the app.
+```bash
+git clone https://github.com/Ailish-tech/Golden_hour.git
+cd Golden_hour
+./run.command
+```
+
+On macOS you can also just double-click `run.command`.
+
+That one command checks prerequisites, starts MongoDB, writes both `.env`
+files, installs dependencies, runs typecheck and tests, boots the backend,
+provisions a hospital account, runs the end-to-end check, and opens the app.
 
 ```bash
 ./run.command           # set up, verify, launch
-./run.command verify    # set up and verify only
-./run.command stop      # stop the MongoDB container it started
+./run.command verify    # set up and verify, then stop
+./run.command stop      # stop the MongoDB it started
 ```
 
-**No Firebase project is needed to try it.** The script configures both halves
-for local development: the app mints a local identity and the backend accepts
-it under its matching opt-in. Sign in with any email and a 6+ character
-password; `hospital@local.test` is seeded as a hospital desk so you can see
-both sides.
+### Signing in
 
-That is a development stand-in, not authentication — no password is checked and
-no token is verified. The server ignores the flag when `NODE_ENV=production`.
-Setting the `EXPO_PUBLIC_FIREBASE_*` values and dropping
-`EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH` switches both sides back to real Firebase.
+**No Firebase project is needed.** The script configures both halves for local
+development: the app mints a local identity and the backend accepts it under
+its matching opt-in.
+
+| Role | Email | Password |
+|---|---|---|
+| Citizen (responder) | anything — `demo@test.com` | anything, 6+ characters |
+| Hospital desk | `hospital@local.test` | anything, 6+ characters |
+
+The hospital address is the one thing that matters: the server resolves that
+role from an allowlist the script seeds, so any other email signs in as a
+citizen. Open the two roles in separate browser profiles — a second tab shares
+the session.
+
+> Local sign-in is a development stand-in, not authentication: no password is
+> checked and no token is verified. The app shows a banner saying so, and the
+> server ignores the flag when `NODE_ENV=production`. Setting the
+> `EXPO_PUBLIC_FIREBASE_*` values and dropping
+> `EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH` switches both sides to real Firebase.
+
+### Seeing it work end to end
+
+1. Sign in as a citizen and press **SOS**. Note the SHA-256 shown.
+2. In a private window, sign in as `hospital@local.test`. The incident appears
+   in the desk's queue.
+3. Dispatch a unit from the desk. The citizen's screen updates within ~2.5s.
+4. The SHA-256 matches on both sides, and
+   `http://localhost:3000/api/verify/<hash>` confirms the server holds that
+   record.
+
+Step 4 is the part worth checking: the responder's record and the hospital's
+view carry the same digest, and it can be verified independently.
+
+Use the **web** target for a demo. Voice triage relies on the browser's speech
+API; Expo Go cannot do voice answers (see Troubleshooting).
 
 ## Prerequisites
 
@@ -191,6 +225,60 @@ naming a plausible-looking destination.
 **Spatial deduplication.** Reports within 150 m of an active incident merge into
 it as secondary reporters, so five bystanders at one crash produce one dispatch
 — and each still receives their own record.
+
+## Troubleshooting
+
+**"Firebase is not configured"** — the app resolves a sign-in mode rather than
+requiring one, so this should not appear. If it does, `app/.env` is missing
+`EXPO_PUBLIC_ALLOW_INSECURE_NO_AUTH=true`, or the bundler is serving a cached
+build from before it was added. `EXPO_PUBLIC_*` values are inlined at build
+time, so a stale cache keeps the old values:
+
+```bash
+cd app && npx expo start --web --clear
+```
+
+**"Load failed" on sign-in, with a CORS error in the console** — the API could
+not be reached. Either the backend is not running (`curl
+http://localhost:3000/api/health`), or the app is on a port the server does not
+allow. Expo moves to 8082, 8083 and onward when its preferred port is taken;
+local development accepts any localhost port, but a deployment needs the origin
+listed in `CORS_ORIGINS`.
+
+**"Port 3000 is in use"** — usually a backend left running from an earlier
+session. `run.command` reclaims one it recognises; anything else it names so
+you can decide. Set `PORT` in `server/.env` to move off it.
+
+**MongoDB will not start** — `brew services` can report success while `mongod`
+exits immediately, so nothing binds to 27017. `run.command` runs the binary
+directly against `~/.golden-hour/mongodb` for this reason. To debug Homebrew's
+copy, run it in the foreground and read the error:
+
+```bash
+mongod --config $(brew --prefix)/etc/mongod.conf
+```
+
+**Voice answers do nothing on a phone** — speech recognition is a native module
+Expo Go cannot provide. The triage screen says so and the YES/NO buttons work
+normally; spoken guidance is unaffected. For voice answers on a device, build a
+development client (`npx expo prebuild`, then `npm run ios` / `npm run
+android`).
+
+**The end-to-end check fails on the hospital steps** — the hospital account was
+not provisioned. Re-run the seed script (see *Granting hospital access*), or
+pass `HOSPITAL_EMAIL` to match an address that is allowlisted.
+
+## Contributing
+
+```bash
+cd server && npm run typecheck && npm test
+cd app    && npm run typecheck
+```
+
+CI runs both on every push and pull request. The server tests need no database:
+they cover the auth boundary, the local-dev token contract between app and
+server, the CORS policy, and the incident record's contents. Anything touching
+MongoDB lives in `server/test_e2e_sync.js`, which runs against a live server.
 
 ## Pilot preconditions
 

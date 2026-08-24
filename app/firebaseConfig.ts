@@ -22,7 +22,7 @@ import {
   type Auth,
 } from 'firebase/auth';
 import { authedJson } from './api';
-import { LOCAL_DEV_AUTH } from './config';
+import { AUTH_MODE, FIREBASE_ENV, MISSING_FIREBASE_VARS } from './config';
 import { setDevSession, devUidForEmail } from './session';
 
 export type UserRole = 'citizen' | 'hospital';
@@ -41,53 +41,26 @@ export interface AppUserProfile {
 // ---------------------------------------------------------------------------
 // Firebase Configuration
 //
-// Required from the environment. There is deliberately no built-in default:
-// a fallback project silently authenticates against someone else's Firebase,
-// and because the Admin SDK checks an ID token's audience against its own
-// project, the failure surfaces server-side as "incorrect audience" — which
-// reads like a broken token rather than a misconfigured app.
+// Initialised only when AUTH_MODE resolves to 'firebase'. A missing setting no
+// longer throws at module scope: that took the entire app down — SOS, dispatch
+// and the CPR metronome with it — for a configuration problem, and a bundler
+// serving a cached build made it look like the setting had been ignored.
 //
-// These are public project identifiers, not secrets; access is governed by
-// Firebase Auth and your security rules.
+// The fallback is not silent. AuthScreen shows a banner whenever sign-in is
+// the local stand-in, so it cannot be mistaken for real authentication.
 // ---------------------------------------------------------------------------
 let auth: Auth | null = null;
 
-if (!LOCAL_DEV_AUTH) {
-  const REQUIRED_FIREBASE_ENV = {
-    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_SENDER_ID,
-    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-  } as const;
-
-  const ENV_VAR_NAMES: Record<keyof typeof REQUIRED_FIREBASE_ENV, string> = {
-    apiKey: 'EXPO_PUBLIC_FIREBASE_API_KEY',
-    authDomain: 'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN',
-    projectId: 'EXPO_PUBLIC_FIREBASE_PROJECT_ID',
-    storageBucket: 'EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET',
-    messagingSenderId: 'EXPO_PUBLIC_FIREBASE_SENDER_ID',
-    appId: 'EXPO_PUBLIC_FIREBASE_APP_ID',
-  };
-
-  const missing = (Object.keys(REQUIRED_FIREBASE_ENV) as Array<keyof typeof REQUIRED_FIREBASE_ENV>)
-    .filter((k) => !REQUIRED_FIREBASE_ENV[k])
-    .map((k) => ENV_VAR_NAMES[k]);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `Firebase is not configured. Missing in app/.env:\n  ${missing.join('\n  ')}\n\n` +
-        'Copy these from the Firebase console: Project settings -> General -> Your apps -> Web app -> SDK setup and configuration.\n' +
-        "The project you choose must be the SAME one your backend's service-account key belongs to."
-    );
-  }
-
-  const firebaseConfig = REQUIRED_FIREBASE_ENV as Record<keyof typeof REQUIRED_FIREBASE_ENV, string>;
-
-  const app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
+if (AUTH_MODE === 'firebase') {
+  auth = getAuth(initializeApp(FIREBASE_ENV as Record<string, string>));
+} else if (MISSING_FIREBASE_VARS.length > 0) {
+  console.warn(
+    '[Auth] Firebase is not configured — signing in locally instead. Missing: ' +
+      MISSING_FIREBASE_VARS.join(', ')
+  );
 }
+
+const LOCAL_DEV_AUTH = AUTH_MODE === 'local';
 
 // ---------------------------------------------------------------------------
 // Error mapping — by code, not by message substring

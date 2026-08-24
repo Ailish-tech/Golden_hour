@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { getAuth } from 'firebase/auth';
-import { API_BASE, assertApiConfigured, LOCAL_DEV_AUTH } from './config';
+import { API_BASE, assertApiConfigured, AUTH_MODE } from './config';
 import { getDevSession } from './session';
 
 export class ApiError extends Error {
@@ -22,7 +22,7 @@ export class ApiError extends Error {
 async function currentIdToken(): Promise<string> {
   // Checked before touching Firebase: getAuth() throws when no app was
   // initialised, which is exactly the case in local dev mode.
-  if (LOCAL_DEV_AUTH) {
+  if (AUTH_MODE === 'local') {
     const session = getDevSession();
     if (!session) throw new ApiError(401, 'Not signed in.');
     // The shape the server's decodeInsecure() expects.
