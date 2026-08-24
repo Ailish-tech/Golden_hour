@@ -1,5 +1,11 @@
 node_modules/
 .env
+.env.local
 .DS_Store
 dist/
 .expo/
+*.tsbuildinfo
+
+# Generated incident records — never commit, they contain real coordinates
+*_cert.pdf
+test_downloaded_*.pdf
