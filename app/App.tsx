@@ -22,7 +22,6 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
-import { registerRootComponent } from 'expo';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
@@ -2372,6 +2371,3 @@ const styles = StyleSheet.create({
     color: '#8ed5ff',
   } as TextStyle,
 });
-
-// Register root component
-registerRootComponent(App);
