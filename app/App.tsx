@@ -1,27 +1,45 @@
 // ============================================================================
 // SAMARITAN SHIELD — Main Emergency Application (App.tsx)
-// Cyber-Tactical Emergency HUD • CAD Hospital Dispatch • Legal Protection
+// Responder HUD · hospital dispatch · verifiable incident record
+// Styling follows the "Signal" system in theme.ts; icons come from icons.tsx.
 // ============================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-  StatusBar,
+  ActivityIndicator,
+  Alert,
   Animated,
   Easing,
-  Platform,
-  Alert,
-  ActivityIndicator,
-  Vibration,
-  Modal,
   Linking,
-  ViewStyle,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
   TextStyle,
+  TouchableOpacity,
+  Vibration,
+  View,
+  ViewStyle,
 } from 'react-native';
+import { color, font, WEB_FONT_HREF } from './theme';
+import {
+  AmbulanceIcon,
+  ArrowRightIcon,
+  BedIcon,
+  BreathIcon,
+  DocumentIcon,
+  DownloadIcon,
+  DropIcon,
+  HospitalIcon,
+  MapIcon,
+  PinIcon,
+  PulseIcon,
+  ShieldIcon,
+  WarningIcon,
+  type IconProps,
+} from './icons';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import VoiceTriage from './VoiceTriage';
@@ -63,7 +81,8 @@ interface TraumaProtocolStep {
   step: number;
   title: string;
   detail: string;
-  icon: string;
+  /** The step's icon component, not a glyph — so it takes a size and a colour. */
+  Icon: React.FC<IconProps>;
 }
 
 interface SOSApiResponse {
@@ -90,27 +109,27 @@ const TRAUMA_PROTOCOL_STEPS: TraumaProtocolStep[] = [
   {
     step: 1,
     title: 'SECURE & ASSESS',
-    detail: 'Ensure scene is safe. Approach victim. Shout loudly and tap collarbone. If no response → point at bystander and yell "Call 108!"',
-    icon: '⚠️',
-  },
+    detail: 'Ensure scene is safe. Approach victim. Shout loudly and tap collarbone. If no response, point at a bystander and yell "Call 108!"',
+    Icon: WarningIcon,
+    },
   {
     step: 2,
     title: 'MASSIVE BLEEDING',
-    detail: 'Rapid body sweep. Blood spurting or pooling? → Expose wound, pack deep, full body weight pressure. Limbs: tourniquet 2 inches above, twist until stopped. Do NOT advance until bleeding stops.',
-    icon: '🩸',
-  },
+    detail: 'Rapid body sweep. Blood spurting or pooling? Expose the wound, pack deep, full body weight pressure. Limbs: tourniquet 2 inches above, twist until stopped. Do NOT advance until bleeding stops.',
+    Icon: DropIcon,
+    },
   {
     step: 3,
     title: 'CHECK BREATHING',
-    detail: 'Only after bleeding is controlled. Look at bare chest — rising/falling? Ear to mouth — hear air? Agonal gasping = NOT breathing (heart stopped).',
-    icon: '🫁',
-  },
+    detail: 'Only after bleeding is controlled. Look at bare chest — rising/falling? Ear to mouth — hear air? Agonal gasping is NOT breathing (heart stopped).',
+    Icon: BreathIcon,
+    },
   {
     step: 4,
     title: 'EXECUTE CPR',
     detail: 'Chest compressions ONLY. Heel of hand center of chest. Lock elbows straight. Push 2+ inches deep, 100–120 BPM. Full recoil. Do not stop. Ignore rib cracking. No mouth-to-mouth.',
-    icon: '❤️',
-  },
+    Icon: PulseIcon,
+    },
 ];
 
 // ============================================================================
@@ -159,8 +178,7 @@ export default function App(): React.JSX.Element {
         const link = document.createElement('link');
         link.id = fontId;
         link.rel = 'stylesheet';
-        link.href =
-          'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap';
+        link.href = WEB_FONT_HREF;
         document.head.appendChild(link);
       }
     }
@@ -583,15 +601,15 @@ export default function App(): React.JSX.Element {
     <View style={styles.topHeader}>
       <View style={styles.headerLeft}>
         <View style={styles.shieldIconBox}>
-          <Text style={styles.shieldEmoji}>🛡️</Text>
+          <ShieldIcon size={22} color={color.text} />
         </View>
         <View>
           <Text style={styles.headerTitle}>SAMARITAN_SHIELD</Text>
           {currentUser && (
             <Text style={styles.userRoleBadge}>
               {currentUser.role === 'hospital'
-                ? `🏥 ${currentUser.displayName}`
-                : `🛡️ CITIZEN: ${currentUser.displayName}`}
+                ? ` ${currentUser.displayName}`
+                : ` CITIZEN: ${currentUser.displayName}`}
             </Text>
           )}
         </View>
@@ -603,7 +621,7 @@ export default function App(): React.JSX.Element {
             onPress={handleLogout}
             activeOpacity={0.75}
           >
-            <Text style={styles.switchRoleText}>🚪 SWITCH</Text>
+            <Text style={styles.switchRoleText}>SWITCH</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -642,15 +660,14 @@ export default function App(): React.JSX.Element {
             activeOpacity={0.8}
           >
             <View style={styles.sosInnerGlow}>
-              <Text style={styles.sosAsterisk}>✱</Text>
+              
               <Text style={styles.sosButtonLabel}>SOS</Text>
             </View>
           </TouchableOpacity>
         </Animated.View>
 
-        <Text style={styles.sosEmergencyHeadline}>🚨 EMERGENCY SOS</Text>
-        <Text style={styles.sosEmergencySubhead}>
-          Instant GPS Transmission • CAD Hospital Dispatch • Legal Protection Shield
+        <Text style={styles.sosEmergencyHeadline}>EMERGENCY SOS</Text>
+        <Text style={styles.sosEmergencySubhead}>Instant GPS Transmission • CAD Hospital Dispatch • Legal Protection Shield
         </Text>
       </View>
 
@@ -658,12 +675,11 @@ export default function App(): React.JSX.Element {
       {/* 1. Live GPS Card */}
       <View style={styles.hudFeatureCard}>
         <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>❖ LIVE GPS</Text>
+          <Text style={styles.cardHeaderLabel}>LIVE GPS</Text>
           <View style={styles.pulsingBlueDot} />
         </View>
         <View style={styles.gpsCoordBox}>
-          <Text style={styles.gpsCoordText}>
-            LAT: {coordinates.lat.toFixed(4)}° N, LON: {coordinates.lng.toFixed(4)}° E
+          <Text style={styles.gpsCoordText}>LAT: {coordinates.lat.toFixed(4)}° N, LON: {coordinates.lng.toFixed(4)}° E
           </Text>
         </View>
       </View>
@@ -675,8 +691,8 @@ export default function App(): React.JSX.Element {
         activeOpacity={0.8}
       >
         <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>🔒 INCIDENT VERIFICATION</Text>
-          <Text style={styles.cardHeaderIcon}>🛡️</Text>
+          <Text style={styles.cardHeaderLabel}>INCIDENT VERIFICATION</Text>
+          <ShieldIcon size={22} color={color.text} />
         </View>
         <View style={styles.hashPreviewBox}>
           <Text style={styles.hashPreviewLabel}>SHA-256 DIGEST</Text>
@@ -694,13 +710,13 @@ export default function App(): React.JSX.Element {
         activeOpacity={0.8}
       >
         <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>⚖️ LEGAL SHIELD</Text>
+          <Text style={styles.cardHeaderLabel}>LEGAL SHIELD</Text>
           <View style={styles.viewBadge}>
-            <Text style={styles.viewBadgeText}>TAP TO VIEW PDF ➔</Text>
+            <Text style={styles.viewBadgeText}>TAP TO VIEW PDF</Text>
           </View>
         </View>
         <View style={styles.legalInnerBanner}>
-          <Text style={styles.legalInnerIcon}>📑</Text>
+          <DocumentIcon size={22} color={color.text} />
           <View style={{ flex: 1 }}>
             <Text style={styles.legalInnerTitle}>Good Samaritan Rights</Text>
             <Text style={styles.legalInnerSubtitle}>Tap to view your rights and incident record</Text>
@@ -711,7 +727,7 @@ export default function App(): React.JSX.Element {
       {/* 4. Medical Radar */}
       <View style={styles.hudFeatureCard}>
         <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>📡 MEDICAL RADAR</Text>
+          <Text style={styles.cardHeaderLabel}>MEDICAL RADAR</Text>
           <Text style={styles.radarCountText}>
             {nearbyHospitals.length > 0
               ? `${nearbyHospitals.length} ${nearbyHospitals.length === 1 ? 'FACILITY' : 'FACILITIES'} IN RANGE`
@@ -721,8 +737,7 @@ export default function App(): React.JSX.Element {
 
         {nearbyHospitals.length === 0 ? (
           <View style={styles.radarEmptyBox}>
-            <Text style={styles.radarEmptyText}>
-              Nearby hospitals are resolved when you trigger an emergency. In an emergency,
+            <Text style={styles.radarEmptyText}>Nearby hospitals are resolved when you trigger an emergency. In an emergency,
               call 108 directly.
             </Text>
           </View>
@@ -736,15 +751,14 @@ export default function App(): React.JSX.Element {
                 activeOpacity={0.8}
               >
                 <View style={idx === 0 ? styles.radarItemIconBox : styles.radarItemIconBoxSecondary}>
-                  <Text style={styles.radarItemIcon}>🏥</Text>
+                  <HospitalIcon size={20} color={color.text} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.radarItemName}>{hosp.name}</Text>
-                  <Text style={styles.radarItemMeta}>
-                    ETA: {hosp.etaMinutes} MIN [{hosp.distanceText}]
+                  <Text style={styles.radarItemMeta}>ETA: {hosp.etaMinutes} MIN [{hosp.distanceText}]
                   </Text>
                 </View>
-                <Text style={styles.radarItemArrow}>➔</Text>
+                <ArrowRightIcon size={16} color={color.text} />
               </TouchableOpacity>
             ))}
           </View>
@@ -759,7 +773,7 @@ export default function App(): React.JSX.Element {
       {/* 1. Active SOS Broadcast Alert Bar */}
       {transmissionError && (
         <View style={styles.transmissionErrorBanner}>
-          <Text style={styles.transmissionErrorText}>⚠️ {transmissionError}</Text>
+          <Text style={styles.transmissionErrorText}> {transmissionError}</Text>
         </View>
       )}
 
@@ -775,7 +789,7 @@ export default function App(): React.JSX.Element {
         </Text>
         <View style={styles.activeBroadcastCoordBox}>
           <Text style={styles.activeBroadcastCoordText}>
-            📍 {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+             {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
           </Text>
         </View>
       </View>
@@ -785,8 +799,7 @@ export default function App(): React.JSX.Element {
         <View style={styles.hospitalCadCard}>
           <View style={styles.cadStreamingHeader}>
             <View style={styles.greenPulsingDot} />
-            <Text style={styles.cadStreamingText}>
-              RECORD VISIBLE TO HOSPITAL DESK • TRIAGE UPDATES SYNCING
+            <Text style={styles.cadStreamingText}>RECORD VISIBLE TO HOSPITAL DESK • TRIAGE UPDATES SYNCING
             </Text>
           </View>
 
@@ -794,24 +807,24 @@ export default function App(): React.JSX.Element {
           <Text style={styles.hospitalTraumaLevel}>{primaryHospital.traumaLevel}</Text>
 
           <View style={styles.locationSharedBadge}>
-            <Text style={styles.locationSharedText}>📍 LOCATION SHARED</Text>
+            <Text style={styles.locationSharedText}>LOCATION SHARED</Text>
           </View>
 
           <View style={styles.cadMetricsRow}>
             <View style={styles.cadMetricBox}>
-              <Text style={styles.cadMetricIcon}>📍</Text>
+              <PinIcon size={16} color={color.text} />
               <Text style={styles.cadMetricValue}>{primaryHospital.distanceText}</Text>
               <Text style={styles.cadMetricLabel}>DISTANCE</Text>
             </View>
 
             <View style={styles.cadMetricBox}>
-              <Text style={styles.cadMetricIconGreen}>🚑</Text>
+              <AmbulanceIcon size={20} color={color.text} />
               <Text style={styles.cadMetricValueGreen}>~{primaryHospital.etaMinutes} MIN</Text>
               <Text style={styles.cadMetricLabel}>EST. DRIVE</Text>
             </View>
 
             <View style={styles.cadMetricBox}>
-              <Text style={styles.cadMetricIconCyan}>🛏️</Text>
+              <BedIcon size={20} color={color.text} />
               <Text style={styles.cadMetricValueCyan}>
                 {primaryHospital.bedsAvailable ?? '—'}
               </Text>
@@ -827,7 +840,7 @@ export default function App(): React.JSX.Element {
               onPress={() => callHospital(primaryHospital.phone)}
               activeOpacity={0.8}
             >
-              <Text style={styles.cadCallBtnText}>📞 CALL {primaryHospital.phone}</Text>
+              <Text style={styles.cadCallBtnText}>CALL {primaryHospital.phone}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -835,15 +848,14 @@ export default function App(): React.JSX.Element {
               onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
               activeOpacity={0.8}
             >
-              <Text style={styles.cadDirectionsBtnText}>🗺️ DIRECTIONS</Text>
+              <Text style={styles.cadDirectionsBtnText}>DIRECTIONS</Text>
             </TouchableOpacity>
           </View>
         </View>
       ) : (
         <View style={styles.hospitalCadCardEmpty}>
           <Text style={styles.hospitalEmptyTitle}>NO FACILITY LOCATED</Text>
-          <Text style={styles.hospitalEmptyText}>
-            No hospital could be resolved for your location. Call 108 now and give them your
+          <Text style={styles.hospitalEmptyText}>No hospital could be resolved for your location. Call 108 now and give them your
             coordinates directly.
           </Text>
           <TouchableOpacity
@@ -851,7 +863,7 @@ export default function App(): React.JSX.Element {
             onPress={() => callHospital('108')}
             activeOpacity={0.8}
           >
-            <Text style={styles.cadCallBtnText}>📞 CALL 108</Text>
+            <Text style={styles.cadCallBtnText}>CALL 108</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -863,7 +875,7 @@ export default function App(): React.JSX.Element {
         <View style={styles.timelineList}>
           <View style={styles.timelineItem}>
             <View style={hash ? styles.timelineIconCompleted : styles.timelineIconActive}>
-              <Text style={styles.timelineCheck}>{hash ? '✓' : '…'}</Text>
+              <Text style={styles.timelineCheck}>{hash ? '' : '…'}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.timelineItemTitle}>Emergency recorded</Text>
@@ -875,7 +887,7 @@ export default function App(): React.JSX.Element {
 
           <View style={styles.timelineItem}>
             <View style={pdfBase64 ? styles.timelineIconCompleted : styles.timelineIconActive}>
-              <Text style={styles.timelineCheck}>{pdfBase64 ? '✓' : '…'}</Text>
+              <Text style={styles.timelineCheck}>{pdfBase64 ? '' : '…'}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.timelineItemTitle}>Incident record generated</Text>
@@ -892,7 +904,7 @@ export default function App(): React.JSX.Element {
               }
             >
               <Text style={styles.timelineCheck}>
-                {primaryHospital?.ambulanceUnit ? '✓' : '…'}
+                {primaryHospital?.ambulanceUnit ? '' : '…'}
               </Text>
             </View>
             <View style={{ flex: 1 }}>
@@ -934,7 +946,7 @@ export default function App(): React.JSX.Element {
                 {hosp.bedsAvailable != null ? ` • ${hosp.bedsAvailable} beds` : ''}
               </Text>
             </View>
-            <Text style={styles.standbyArrow}>➔</Text>
+            <ArrowRightIcon size={16} color={color.text} />
           </TouchableOpacity>
         ))}
       </View>
@@ -948,19 +960,19 @@ export default function App(): React.JSX.Element {
         onPress={() => setShowCertModal(true)}
         activeOpacity={0.85}
       >
-        <Text style={styles.legalBannerIcon}>📄</Text>
+        <DocumentIcon size={18} color={color.text} />
         <View style={{ flex: 1 }}>
           <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
           <Text style={styles.legalBannerSubtext}>
             {pdfBase64 ? 'Timestamped record + your rights under Section 134A' : 'Generating record...'}
           </Text>
         </View>
-        <Text style={styles.legalBannerArrow}>➔</Text>
+        <ArrowRightIcon size={16} color={color.text} />
       </TouchableOpacity>
 
       {/* Deactivate Button */}
       <TouchableOpacity style={styles.deactivateBtn} onPress={handleReset}>
-        <Text style={styles.deactivateBtnText}>✕ DEACTIVATE EMERGENCY MODE</Text>
+        <Text style={styles.deactivateBtnText}>DEACTIVATE EMERGENCY MODE</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -969,23 +981,20 @@ export default function App(): React.JSX.Element {
   const renderMapsView = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
       <View style={styles.hudFeatureCard}>
-        <Text style={styles.cardHeaderLabel}>🗺️ TACTICAL SATELLITE RADAR</Text>
+        <Text style={styles.cardHeaderLabel}>TACTICAL SATELLITE RADAR</Text>
         <View style={styles.mapCanvasPlaceholder}>
-          <Text style={styles.mapRadarPulse}>((( 🛰️ )))</Text>
-          <Text style={styles.mapCoordsLive}>
-            GPS ANCHOR: {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+          <Text style={styles.mapRadarPulse}>(((  )))</Text>
+          <Text style={styles.mapCoordsLive}>GPS ANCHOR: {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
           </Text>
         </View>
-        <Text style={styles.hudCardSubtext}>
-          Live 2-way tracking synchronized with City CAD emergency dispatch network.
+        <Text style={styles.hudCardSubtext}>Live 2-way tracking synchronized with City CAD emergency dispatch network.
         </Text>
       </View>
 
       <View style={styles.standbyCard}>
         <Text style={styles.standbyHeader}>NEARBY TRAUMA HUBS & ROUTES</Text>
         {nearbyHospitals.length === 0 ? (
-          <Text style={styles.hudCardSubtext}>
-            No facilities resolved yet. Hospitals are looked up when an emergency is triggered.
+          <Text style={styles.hudCardSubtext}>No facilities resolved yet. Hospitals are looked up when an emergency is triggered.
           </Text>
         ) : (
           nearbyHospitals.map((h) => (
@@ -1000,7 +1009,7 @@ export default function App(): React.JSX.Element {
                   {h.distanceText} • ~{h.etaMinutes} min drive • {h.phone}
                 </Text>
               </View>
-              <Text style={styles.standbyArrow}>🗺️</Text>
+              <MapIcon size={16} color={color.text} />
             </TouchableOpacity>
           ))
         )}
@@ -1012,9 +1021,8 @@ export default function App(): React.JSX.Element {
   const renderIntelView = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
       <View style={styles.systemStatusCard}>
-        <Text style={styles.cardHeaderLabel}>📖 SEVERE TRAUMA PROTOCOL (4-STEP)</Text>
-        <Text style={styles.hudCardSubtext}>
-          Prioritized resuscitation algorithm: Stop the bleed before checking breathing. Compressions-only CPR.
+        <Text style={styles.cardHeaderLabel}>SEVERE TRAUMA PROTOCOL (4-STEP)</Text>
+        <Text style={styles.hudCardSubtext}>Prioritized resuscitation algorithm: Stop the bleed before checking breathing. Compressions-only CPR.
         </Text>
       </View>
 
@@ -1028,16 +1036,16 @@ export default function App(): React.JSX.Element {
             activeOpacity={0.8}
           >
             <View style={styles.drsabcLetterBox}>
-              <Text style={styles.drsabcLetter}>{step.step}</Text>
+              <step.Icon size={19} color={color.signalLift} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.drsabcTitle}>
-                {step.icon} {step.title}
+                {step.title}
               </Text>
               <Text style={styles.drsabcDetail}>{step.detail}</Text>
             </View>
             <Text style={[styles.drsabcCheck, isChecked && styles.drsabcCheckActive]}>
-              {isChecked ? '✓' : '○'}
+              {isChecked ? '' : ''}
             </Text>
           </TouchableOpacity>
         );
@@ -1049,22 +1057,20 @@ export default function App(): React.JSX.Element {
   const renderReportsView = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
       <View style={styles.hudFeatureCard}>
-        <Text style={styles.cardHeaderLabel}>⚖️ YOUR RIGHTS AS A GOOD SAMARITAN</Text>
-        <Text style={styles.hudCardSubtext}>
-          Under Section 134A of the Motor Vehicles Act, 2019 and the Supreme Court guidelines (WP Civil 235/2012), a citizen rendering emergency assistance is protected from civil and criminal liability and cannot be compelled to identify themselves. These protections apply by law — no document is required to claim them.
+        <Text style={styles.cardHeaderLabel}>YOUR RIGHTS AS A GOOD SAMARITAN</Text>
+        <Text style={styles.hudCardSubtext}>Under Section 134A of the Motor Vehicles Act, 2019 and the Supreme Court guidelines (WP Civil 235/2012), a citizen rendering emergency assistance is protected from civil and criminal liability and cannot be compelled to identify themselves. These protections apply by law — no document is required to claim them.
         </Text>
       </View>
 
       <View style={styles.hudFeatureCard}>
-        <Text style={styles.cardHeaderLabel}>🔐 INCIDENT RECORD DIGEST</Text>
+        <Text style={styles.cardHeaderLabel}>INCIDENT RECORD DIGEST</Text>
         <View style={styles.hashPreviewBox}>
           <Text style={styles.hashPreviewLabel}>SHA-256 RECORD DIGEST</Text>
           <Text style={styles.hashPreviewValue}>
             {hash || 'No record yet — trigger an emergency to generate one'}
           </Text>
         </View>
-        <Text style={styles.hudCardSubtext}>
-          Verified Timestamp: {timestamp || 'Standing by for emergency trigger'}
+        <Text style={styles.hudCardSubtext}>Verified Timestamp: {timestamp || 'Standing by for emergency trigger'}
         </Text>
       </View>
 
@@ -1072,12 +1078,12 @@ export default function App(): React.JSX.Element {
         style={styles.legalBannerCTA}
         onPress={handleOpenCertificate}
       >
-        <Text style={styles.legalBannerIcon}>📄</Text>
+        <DocumentIcon size={18} color={color.text} />
         <View style={{ flex: 1 }}>
           <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
           <Text style={styles.legalBannerSubtext}>Timestamped account of assistance rendered</Text>
         </View>
-        <Text style={styles.legalBannerArrow}>➔</Text>
+        <ArrowRightIcon size={16} color={color.text} />
       </TouchableOpacity>
     </ScrollView>
   );
@@ -1095,15 +1101,12 @@ export default function App(): React.JSX.Element {
           <ScrollView contentContainerStyle={styles.certScrollContent}>
             {/* Government & Statutory Header */}
             <View style={styles.certHeader}>
-              <Text style={styles.certEmblem}>🛡️</Text>
-              <Text style={styles.certGovtTitle}>
-                SAMARITAN SHIELD — INDEPENDENT EMERGENCY RECORD
+              <ShieldIcon size={22} color={color.text} />
+              <Text style={styles.certGovtTitle}>SAMARITAN SHIELD — INDEPENDENT EMERGENCY RECORD
               </Text>
-              <Text style={styles.certMainHeading}>
-                GOOD SAMARITAN INCIDENT RECORD
+              <Text style={styles.certMainHeading}>GOOD SAMARITAN INCIDENT RECORD
               </Text>
-              <Text style={styles.certStatuteBadge}>
-                Not a government document
+              <Text style={styles.certStatuteBadge}>Not a government document
               </Text>
             </View>
 
@@ -1145,21 +1148,19 @@ export default function App(): React.JSX.Element {
 
             <View style={styles.certImmunityCard}>
               <View style={styles.certImmunityHeaderRow}>
-                <Text style={styles.certImmunityIcon}>🛡️</Text>
+                <ShieldIcon size={22} color={color.text} />
                 <Text style={styles.certImmunityTitle}>EXEMPTION FROM LIABILITY</Text>
               </View>
-              <Text style={styles.certImmunityBody}>
-                Under Section 134A of the Motor Vehicles (Amendment) Act, 2019, a person who renders emergency assistance to an accident victim is not liable for any civil or criminal action for injury to or death of the victim arising from it. This applies by law, with or without this record.
+              <Text style={styles.certImmunityBody}>Under Section 134A of the Motor Vehicles (Amendment) Act, 2019, a person who renders emergency assistance to an accident victim is not liable for any civil or criminal action for injury to or death of the victim arising from it. This applies by law, with or without this record.
               </Text>
             </View>
 
             <View style={styles.certImmunityCard}>
               <View style={styles.certImmunityHeaderRow}>
-                <Text style={styles.certImmunityIcon}>🚫</Text>
+                <WarningIcon size={18} color={color.text} />
                 <Text style={styles.certImmunityTitle}>PROTECTION FROM HARASSMENT</Text>
               </View>
-              <Text style={styles.certImmunityBody}>
-                Following the Supreme Court of India in Writ Petition (Civil) No. 235 of 2012, you cannot be compelled to disclose your identity or address, detained, or subjected to mandatory questioning.
+              <Text style={styles.certImmunityBody}>Following the Supreme Court of India in Writ Petition (Civil) No. 235 of 2012, you cannot be compelled to disclose your identity or address, detained, or subjected to mandatory questioning.
               </Text>
             </View>
 
@@ -1171,8 +1172,7 @@ export default function App(): React.JSX.Element {
                   : 'NO RECORD YET'}
               </Text>
             </View>
-            <Text style={styles.certDisclaimer}>
-              Generated automatically by Samaritan Shield. Not issued, certified or endorsed by
+            <Text style={styles.certDisclaimer}>Generated automatically by Samaritan Shield. Not issued, certified or endorsed by
               any government body, and not digitally signed. It does not itself confer legal
               status — it records what happened and when.
             </Text>
@@ -1183,7 +1183,7 @@ export default function App(): React.JSX.Element {
               onPress={downloadPDF}
               activeOpacity={0.8}
             >
-              <Text style={styles.certDownloadBtnIcon}>📥</Text>
+              <DownloadIcon size={18} color={color.text} />
               <Text style={styles.certDownloadBtnText}>DOWNLOAD RECORD (PDF)</Text>
             </TouchableOpacity>
 
@@ -1191,7 +1191,7 @@ export default function App(): React.JSX.Element {
               style={styles.certCloseBtn}
               onPress={() => setShowCertModal(false)}
             >
-              <Text style={styles.certCloseBtnText}>✕ CLOSE</Text>
+              <Text style={styles.certCloseBtnText}>CLOSE</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -1208,10 +1208,10 @@ export default function App(): React.JSX.Element {
           tab === 'HUB'
             ? '⊞'
             : tab === 'MAPS'
-            ? '🧭'
+            ? ''
             : tab === 'INTEL'
-            ? '📰'
-            : '📄';
+            ? ''
+            : '';
 
         return (
           <TouchableOpacity
@@ -1291,7 +1291,7 @@ export default function App(): React.JSX.Element {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#0a0a14',
+    backgroundColor: color.ground,
   } as ViewStyle,
 
   mainContent: {
@@ -1317,9 +1317,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 18,
     paddingVertical: 12,
-    backgroundColor: '#0f172a',
+    backgroundColor: color.surface,
     borderBottomWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   headerLeft: {
     flexDirection: 'row',
@@ -1334,42 +1334,42 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#8ed5ff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.amber,
+    fontFamily: font.mono,
     letterSpacing: 1.5,
   } as TextStyle,
   userRoleBadge: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: color.amber,
     marginTop: 1,
   } as TextStyle,
   headerRight: {},
   switchRoleBtn: {
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: color.hairlineStrong,
   } as ViewStyle,
   switchRoleText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#cbd5e1',
+    color: color.textMuted,
   } as TextStyle,
 
   // --- System Status Banner ---
   systemStatusCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#1f2937',
+    borderColor: color.surface,
   } as ViewStyle,
   statusRowBetween: {
     flexDirection: 'row',
@@ -1384,20 +1384,20 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#38bdf8',
+    backgroundColor: color.amber,
     marginRight: 8,
   } as ViewStyle,
   statusTextLive: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: color.textMuted,
   } as TextStyle,
   nodeBadge: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
   } as TextStyle,
 
@@ -1415,19 +1415,19 @@ const styles = StyleSheet.create({
     height: 220,
     borderRadius: 28,
     borderWidth: 2,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
     top: 10,
   } as ViewStyle,
   sosTactileButton: {
     width: 170,
     height: 170,
     borderRadius: 24,
-    backgroundColor: '#320b10',
+    backgroundColor: color.signalWash,
     borderWidth: 2.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#ef4444',
+    shadowColor: color.signal,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 16,
@@ -1439,27 +1439,27 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   sosAsterisk: {
     fontSize: 44,
-    color: '#fca5a5',
+    color: color.signalLift,
     marginBottom: -4,
   } as TextStyle,
   sosButtonLabel: {
     fontSize: 26,
     fontWeight: '900',
-    color: '#fca5a5',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.signalLift,
+    fontFamily: font.mono,
     letterSpacing: 3,
   } as TextStyle,
   sosEmergencyHeadline: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     marginTop: 18,
     letterSpacing: 1,
   } as TextStyle,
   sosEmergencySubhead: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#94a3b8',
+    fontFamily: font.mono,
+    color: color.textMuted,
     textAlign: 'center',
     marginTop: 6,
     paddingHorizontal: 20,
@@ -1468,12 +1468,12 @@ const styles = StyleSheet.create({
 
   // --- HUD Feature Cards ---
   hudFeatureCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 14,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   cardHeaderRow: {
     flexDirection: 'row',
@@ -1483,9 +1483,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   cardHeaderLabel: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#8ed5ff',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
   cardHeaderIcon: {
@@ -1495,75 +1495,75 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#38bdf8',
+    backgroundColor: color.amber,
   } as ViewStyle,
   gpsCoordBox: {
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   gpsCoordText: {
     fontSize: 13,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
 
   hashPreviewBox: {
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   hashPreviewLabel: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
     fontWeight: '700',
     marginBottom: 4,
   } as TextStyle,
   hashPreviewValue: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#34d399',
+    fontFamily: font.mono,
+    color: color.confirm,
     lineHeight: 16,
   } as TextStyle,
   hudCardSubtext: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#94a3b8',
+    fontFamily: font.mono,
+    color: color.textMuted,
   } as TextStyle,
 
   viewBadge: {
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   viewBadgeText: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
     letterSpacing: 0.5,
   } as TextStyle,
 
   legalInnerBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   legalInnerIcon: {
     fontSize: 22,
@@ -1572,19 +1572,19 @@ const styles = StyleSheet.create({
   legalInnerTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#ffffff',
+    color: color.text,
   } as TextStyle,
   legalInnerSubtitle: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#94a3b8',
+    fontFamily: font.mono,
+    color: color.textMuted,
   } as TextStyle,
 
   radarCountText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
   radarHospitalList: {
     gap: 8,
@@ -1592,17 +1592,17 @@ const styles = StyleSheet.create({
   radarHospitalItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   radarItemIconBox: {
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#172554',
+    backgroundColor: color.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
@@ -1611,7 +1611,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
@@ -1622,27 +1622,27 @@ const styles = StyleSheet.create({
   radarItemName: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#ffffff',
+    color: color.text,
   } as TextStyle,
   radarItemMeta: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#38bdf8',
+    fontFamily: font.mono,
+    color: color.amber,
     marginTop: 2,
   } as TextStyle,
   radarItemArrow: {
     fontSize: 14,
-    color: '#64748b',
+    color: color.textFaint,
   } as TextStyle,
 
   // --- SCREEN 2: ACTIVE TRANSMISSION HUB ---
   activeBroadcastCard: {
-    backgroundColor: '#261417',
+    backgroundColor: color.signalWash,
     borderRadius: 14,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   activeBroadcastTop: {
     flexDirection: 'row',
@@ -1653,25 +1653,25 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 4.5,
-    backgroundColor: '#ef4444',
+    backgroundColor: color.signal,
     marginRight: 8,
   } as ViewStyle,
   activeBroadcastTitle: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 1,
   } as TextStyle,
   activeBroadcastIncident: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#f87171',
+    color: color.signalLift,
     letterSpacing: 1,
     marginBottom: 8,
   } as TextStyle,
   activeBroadcastCoordBox: {
-    backgroundColor: '#170a0d',
+    backgroundColor: color.signalWash,
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1679,19 +1679,19 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   activeBroadcastCoordText: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#fca5a5',
+    color: color.signalLift,
   } as TextStyle,
 
   // Hospital CAD Dispatch Card
   hospitalCadCard: {
-    backgroundColor: '#172033',
+    backgroundColor: color.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#253b5e',
+    borderColor: color.hairline,
   } as ViewStyle,
   cadStreamingHeader: {
     flexDirection: 'row',
@@ -1702,43 +1702,43 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#22c55e',
+    backgroundColor: color.confirm,
     marginRight: 8,
   } as ViewStyle,
   cadStreamingText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#4ade80',
+    color: color.confirm,
     letterSpacing: 0.8,
   } as TextStyle,
   hospitalMainName: {
     fontSize: 20,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     lineHeight: 26,
   } as TextStyle,
   hospitalTraumaLevel: {
     fontSize: 12,
-    color: '#93c5fd',
+    color: color.amber,
     marginTop: 2,
     marginBottom: 8,
   } as TextStyle,
   locationSharedBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
     marginBottom: 14,
   } as ViewStyle,
   locationSharedText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
 
@@ -1749,12 +1749,12 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   cadMetricBox: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: color.surface,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   cadMetricIcon: {
     fontSize: 16,
@@ -1771,26 +1771,26 @@ const styles = StyleSheet.create({
   cadMetricValue: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
   cadMetricValueGreen: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#22c55e',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.confirm,
+    fontFamily: font.mono,
   } as TextStyle,
   cadMetricValueCyan: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#38bdf8',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.amber,
+    fontFamily: font.mono,
   } as TextStyle,
   cadMetricLabel: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '700',
-    color: '#64748b',
+    color: color.textFaint,
     marginTop: 2,
     letterSpacing: 1,
   } as TextStyle,
@@ -1801,51 +1801,51 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   cadCallButton: {
     flex: 1.2,
-    backgroundColor: '#881337',
+    backgroundColor: color.signalDeep,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   cadCallBtnText: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 1,
   } as TextStyle,
   cadDirectionsButton: {
     flex: 1,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   cadDirectionsBtnText: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
 
   // Timeline Stepper Card
   timelineCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   timelineHeader: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#8ed5ff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.amber,
+    fontFamily: font.mono,
     letterSpacing: 1.5,
     marginBottom: 12,
   } as TextStyle,
@@ -1860,9 +1860,9 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     borderWidth: 1.5,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1871,9 +1871,9 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#052e16',
+    backgroundColor: color.confirmWash,
     borderWidth: 1.5,
-    borderColor: '#22c55e',
+    borderColor: color.confirm,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1882,106 +1882,106 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     borderWidth: 1.5,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   } as ViewStyle,
   timelineCheck: {
     fontSize: 12,
-    color: '#38bdf8',
+    color: color.amber,
     fontWeight: '900',
   } as TextStyle,
   timelineDotCyan: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#38bdf8',
+    backgroundColor: color.amber,
   } as ViewStyle,
   timelineItemTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: color.textMuted,
   } as TextStyle,
   timelineItemTitleGreen: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#4ade80',
+    color: color.confirm,
   } as TextStyle,
   timelineItemTitleCyan: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
   timelineItemTime: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
     marginTop: 1,
   } as TextStyle,
   timelineItemTimeActive: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#38bdf8',
+    fontFamily: font.mono,
+    color: color.amber,
     fontWeight: '700',
     marginTop: 1,
   } as TextStyle,
 
   // Standby Card
   standbyCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   standbyHeader: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
     marginBottom: 10,
   } as TextStyle,
   standbyItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   standbyName: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#ffffff',
+    color: color.text,
   } as TextStyle,
   standbyMeta: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
     marginTop: 2,
   } as TextStyle,
   standbyArrow: {
     fontSize: 14,
-    color: '#64748b',
+    color: color.textFaint,
   } as TextStyle,
 
   // Legal Banner CTA
   legalBannerCTA: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0f1f17',
+    backgroundColor: color.confirmWash,
     borderRadius: 14,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#22c55e',
+    borderColor: color.confirm,
   } as ViewStyle,
   legalBannerIcon: {
     fontSize: 24,
@@ -1990,45 +1990,45 @@ const styles = StyleSheet.create({
   legalBannerTitle: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#4ade80',
+    color: color.confirm,
     letterSpacing: 0.5,
   } as TextStyle,
   legalBannerSubtext: {
     fontSize: 11,
-    color: '#86efac',
+    color: color.confirm,
     marginTop: 2,
   } as TextStyle,
   legalBannerArrow: {
     fontSize: 18,
-    color: '#4ade80',
+    color: color.confirm,
     fontWeight: '900',
   } as TextStyle,
 
   deactivateBtn: {
-    backgroundColor: '#1e1014',
+    backgroundColor: color.signalWash,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#7f1d1d',
+    borderColor: color.signalDeep,
     marginBottom: 10,
   } as ViewStyle,
   deactivateBtnText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#f87171',
+    color: color.signalLift,
     letterSpacing: 1.5,
   } as TextStyle,
 
   // --- MAPS PLACEHOLDER ---
   mapCanvasPlaceholder: {
     height: 180,
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
     marginVertical: 10,
   } as ViewStyle,
   mapRadarPulse: {
@@ -2037,31 +2037,31 @@ const styles = StyleSheet.create({
   } as TextStyle,
   mapCoordsLive: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
 
   // --- INTEL DRSABC ---
   drsabcCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   drsabcCardChecked: {
-    borderColor: '#22c55e',
-    backgroundColor: '#0a1d13',
+    borderColor: color.confirm,
+    backgroundColor: color.confirmWash,
   } as ViewStyle,
   drsabcLetterBox: {
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -2069,26 +2069,26 @@ const styles = StyleSheet.create({
   drsabcLetter: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
   drsabcTitle: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
   } as TextStyle,
   drsabcDetail: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: color.textMuted,
     marginTop: 2,
   } as TextStyle,
   drsabcCheck: {
     fontSize: 18,
-    color: '#475569',
+    color: color.hairlineStrong,
     fontWeight: '900',
     marginLeft: 8,
   } as TextStyle,
   drsabcCheckActive: {
-    color: '#22c55e',
+    color: color.confirm,
   } as TextStyle,
 
   // --- SCREEN 4: LEGAL SHIELD CERTIFICATE MODAL ---
@@ -2103,12 +2103,12 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 520,
     maxHeight: '90%',
-    backgroundColor: '#0c1322',
+    backgroundColor: color.groundDeep,
     borderRadius: 18,
     borderWidth: 2.5,
-    borderColor: '#eab308',
+    borderColor: color.amber,
     padding: 20,
-    shadowColor: '#eab308',
+    shadowColor: color.amber,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.3,
     shadowRadius: 16,
@@ -2120,7 +2120,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     borderBottomWidth: 1,
-    borderColor: '#334155',
+    borderColor: color.hairline,
     paddingBottom: 12,
   } as ViewStyle,
   certEmblem: {
@@ -2129,38 +2129,38 @@ const styles = StyleSheet.create({
   } as TextStyle,
   certGovtTitle: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#facc15',
+    color: color.amber,
     letterSpacing: 2,
     textAlign: 'center',
   } as TextStyle,
   certMainHeading: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     textAlign: 'center',
     marginTop: 4,
   } as TextStyle,
   certStatuteBadge: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#94a3b8',
+    fontFamily: font.mono,
+    color: color.textMuted,
     marginTop: 2,
   } as TextStyle,
 
   certDataBox: {
-    backgroundColor: '#162032',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 8,
     padding: 10,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#24344d',
+    borderColor: color.hairline,
   } as ViewStyle,
   certDataLabel: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
     fontWeight: '800',
     letterSpacing: 1,
     marginBottom: 2,
@@ -2168,49 +2168,49 @@ const styles = StyleSheet.create({
   certDataValue: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
 
   certHashCard: {
-    backgroundColor: '#061a14',
+    backgroundColor: color.confirmWash,
     borderRadius: 8,
     padding: 10,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#10b981',
+    borderColor: color.confirm,
   } as ViewStyle,
   certHashLabel: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#6ee7b7',
+    fontFamily: font.mono,
+    color: color.confirm,
     fontWeight: '800',
     letterSpacing: 1,
     marginBottom: 2,
   } as TextStyle,
   certHashText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#34d399',
+    fontFamily: font.mono,
+    color: color.confirm,
     lineHeight: 14,
   } as TextStyle,
 
   certSectionTitle: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#facc15',
+    color: color.amber,
     letterSpacing: 1.5,
     marginTop: 6,
     marginBottom: 8,
   } as TextStyle,
   certImmunityCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#1f2937',
+    borderColor: color.surface,
   } as ViewStyle,
   certImmunityHeaderRow: {
     flexDirection: 'row',
@@ -2224,18 +2224,18 @@ const styles = StyleSheet.create({
   certImmunityTitle: {
     fontSize: 11,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 0.5,
   } as TextStyle,
   certImmunityBody: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: color.textMuted,
     lineHeight: 14,
   } as TextStyle,
 
   certStampBox: {
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
     borderRadius: 6,
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -2245,9 +2245,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   certStampText: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#ef4444',
+    color: color.signal,
     letterSpacing: 2,
   } as TextStyle,
 
@@ -2255,22 +2255,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#172554',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 10,
     paddingVertical: 14,
     borderWidth: 1.5,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
     marginBottom: 8,
   } as ViewStyle,
   certDownloadBtnIcon: {
     fontSize: 18,
-    color: '#38bdf8',
+    color: color.amber,
     marginRight: 8,
   } as TextStyle,
   certDownloadBtnText: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 1,
   } as TextStyle,
 
@@ -2281,16 +2281,16 @@ const styles = StyleSheet.create({
   certCloseBtnText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
   } as TextStyle,
 
   // --- BOTTOM NAVIGATION ---
   bottomNav: {
     flexDirection: 'row',
-    backgroundColor: '#0c101d',
+    backgroundColor: color.groundDeep,
     borderTopWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
     paddingVertical: 10,
     paddingHorizontal: 8,
   } as ViewStyle,
@@ -2302,30 +2302,30 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   } as ViewStyle,
   navTabActive: {
-    backgroundColor: '#162032',
+    backgroundColor: color.surfaceMuted,
   } as ViewStyle,
   navTabIcon: {
     fontSize: 18,
-    color: '#64748b',
+    color: color.textFaint,
     marginBottom: 2,
   } as TextStyle,
   navTabIconActive: {
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
   navTabLabel: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#64748b',
+    color: color.textFaint,
     letterSpacing: 1,
   } as TextStyle,
   navTabLabelActive: {
-    color: '#8ed5ff',
+    color: color.amber,
   } as TextStyle,
 
   certDisclaimer: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: color.textMuted,
     lineHeight: 15,
     marginTop: 10,
     marginBottom: 4,
@@ -2333,53 +2333,53 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   radarEmptyBox: {
-    backgroundColor: '#0d1424',
+    backgroundColor: color.groundDeep,
     borderRadius: 10,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   radarEmptyText: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: color.textMuted,
     lineHeight: 17,
   } as TextStyle,
 
   hospitalCadCardEmpty: {
-    backgroundColor: '#1a0c10',
+    backgroundColor: color.signalWash,
     borderRadius: 18,
     padding: 18,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   hospitalEmptyTitle: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#fca5a5',
+    color: color.signalLift,
     letterSpacing: 1,
     marginBottom: 6,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
   } as TextStyle,
   hospitalEmptyText: {
     fontSize: 12,
-    color: '#e2e8f0',
+    color: color.text,
     lineHeight: 18,
     marginBottom: 14,
   } as TextStyle,
 
   transmissionErrorBanner: {
-    backgroundColor: '#3b1216',
+    backgroundColor: color.signalWash,
     borderRadius: 12,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   transmissionErrorText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#fca5a5',
+    color: color.signalLift,
     lineHeight: 18,
   } as TextStyle,
 });

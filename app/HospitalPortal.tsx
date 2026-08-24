@@ -16,6 +16,11 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { color, font } from './theme';
+import {
+  HospitalIcon,
+  PulseIcon,
+} from './icons';
 import { type AppUserProfile } from './firebaseConfig';
 import { authedFetch } from './api';
 
@@ -203,40 +208,39 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       case 'CPR_ACTIVE':
         return (
           <View style={styles.victimStatusTagRed}>
-            <Text style={styles.victimStatusTextRed}>
-              🫀 CPR IS LIVE • {compressions ? `${compressions} COMPRESSIONS` : '110 BPM'} • DO NOT STOP
+            <Text style={styles.victimStatusTextRed}>CPR IS LIVE • {compressions ? `${compressions} COMPRESSIONS` : '110 BPM'} • DO NOT STOP
             </Text>
           </View>
         );
       case 'CRITICAL_UNCONSCIOUS':
         return (
           <View style={styles.victimStatusTagYellow}>
-            <Text style={styles.victimStatusTextYellow}>⚠️ UNCONSCIOUS / UNRESPONSIVE</Text>
+            <Text style={styles.victimStatusTextYellow}>UNCONSCIOUS / UNRESPONSIVE</Text>
           </View>
         );
       case 'RECOVERY_POSITION':
         return (
           <View style={styles.victimStatusTagGreen}>
-            <Text style={styles.victimStatusTextGreen}>🫁 BREATHING • RECOVERY POSITION</Text>
+            <Text style={styles.victimStatusTextGreen}>BREATHING • RECOVERY POSITION</Text>
           </View>
         );
       case 'BLEEDING_TRAUMA':
         return (
           <View style={styles.victimStatusTagRed}>
-            <Text style={styles.victimStatusTextRed}>🩸 SEVERE TRAUMA BLEEDING • ACTIVE</Text>
+            <Text style={styles.victimStatusTextRed}>SEVERE TRAUMA BLEEDING • ACTIVE</Text>
           </View>
         );
       case 'BLEEDING_CONTROLLED':
         return (
           <View style={styles.victimStatusTagGreen}>
-            <Text style={styles.victimStatusTextGreen}>✅ BLEEDING CONTROLLED • PRESSURE HELD</Text>
+            <Text style={styles.victimStatusTextGreen}>BLEEDING CONTROLLED • PRESSURE HELD</Text>
           </View>
         );
       default:
         return (
           <View style={styles.victimStatusTagYellow}>
             <Text style={styles.victimStatusTextYellow}>
-              ⚠️ {condition ? condition.toUpperCase() : 'CRITICAL TRIAGE ACTIVE'}
+               {condition ? condition.toUpperCase() : 'CRITICAL TRIAGE ACTIVE'}
             </Text>
           </View>
         );
@@ -249,7 +253,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       <View style={styles.hospitalHeroCard}>
         <View style={styles.heroTopRow}>
           <View style={styles.hospitalIconBadge}>
-            <Text style={styles.hospitalIcon}>🏥</Text>
+            <HospitalIcon size={20} color={color.text} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.hospitalName}>
@@ -257,8 +261,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             </Text>
             <View style={styles.deskTagRow}>
               <View style={styles.greenBeaconDot} />
-              <Text style={styles.deskTagText}>
-                TRAUMA CAD DESK • 2-WAY CAD DISPATCH ACTIVE
+              <Text style={styles.deskTagText}>TRAUMA CAD DESK • 2-WAY CAD DISPATCH ACTIVE
               </Text>
             </View>
           </View>
@@ -312,10 +315,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         </View>
       ) : (
         <View style={styles.emptyStateCard}>
-          <Text style={styles.emptyStateEmoji}>📡</Text>
+          <PulseIcon size={26} color={color.text} />
           <Text style={styles.emptyStateTitle}>NO ACTIVE INCIDENTS</Text>
-          <Text style={styles.emptyStateText}>
-            Monitoring for incoming SOS alerts. When a citizen activates an emergency,
+          <Text style={styles.emptyStateText}>Monitoring for incoming SOS alerts. When a citizen activates an emergency,
             it will appear here in real-time with live triage telemetry.
           </Text>
         </View>
@@ -342,7 +344,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <View
                     style={[
                       styles.incidentStatusDot,
-                      { backgroundColor: isPending ? '#ef4444' : '#22c55e' },
+                      { backgroundColor: isPending ? color.signal : color.confirm },
                     ]}
                   />
                   <Text style={styles.incidentCodeText}>INCIDENT #{incident.incidentCode}</Text>
@@ -351,7 +353,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                 {/* Distance & ETA Badge */}
                 <View style={styles.distanceBadge}>
                   <Text style={styles.distanceBadgeText}>
-                    📍 {incident.distanceText} • ETA {incident.etaMinutes} MIN
+                     {incident.distanceText} • ETA {incident.etaMinutes} MIN
                   </Text>
                 </View>
               </View>
@@ -378,7 +380,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               <View style={styles.hashBox}>
                 <View style={styles.hashHeaderRow}>
                   <Text style={styles.hashLabel}>GOOD SAMARITAN LEGAL DIGEST (SHA-256)</Text>
-                  <Text style={styles.hashVerifiedTag}>✓ VERIFIED</Text>
+                  <Text style={styles.hashVerifiedTag}>VERIFIED</Text>
                 </View>
                 <Text style={styles.hashText} numberOfLines={1}>
                   {incident.sha256Hash || 'No certificate digest recorded'}
@@ -389,7 +391,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
               {incident.ambulanceUnitAssigned && (
                 <View style={styles.unitAssignedBanner}>
                   <Text style={styles.unitAssignedText}>
-                    🚑 {incident.ambulanceUnitAssigned}
+                     {incident.ambulanceUnitAssigned}
                   </Text>
                 </View>
               )}
@@ -402,7 +404,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     onPress={() => handleDispatchUnit(incident.id)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.dispatchBtnText}>🚑 DISPATCH AMBULANCE UNIT</Text>
+                    <Text style={styles.dispatchBtnText}>DISPATCH AMBULANCE UNIT</Text>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
@@ -412,8 +414,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   >
                     <Text style={styles.reserveBedBtnText}>
                       {incident.status === 'ICU_RESERVED'
-                        ? '✓ ICU BED RESERVED'
-                        : '🛏️ RESERVE ICU BED'}
+                        ? 'ICU BED RESERVED'
+                        : 'RESERVE ICU BED'}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -424,7 +426,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     onPress={() => handleCallResponder(incident.phone)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.secBtnText}>📞 CALL</Text>
+                    <Text style={styles.secBtnText}>CALL</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -432,7 +434,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     onPress={() => onInspectCertificate(incident)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.secBtnText}>📄 CERTIFICATE</Text>
+                    <Text style={styles.secBtnText}>CERTIFICATE</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -440,14 +442,13 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     onPress={() => handleOpenRoute(incident.googleMapsUrl)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.secBtnText}>🗺️ ROUTE</Text>
+                    <Text style={styles.secBtnText}>ROUTE</Text>
                   </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
                   style={styles.resolveBtn}
-                  onPress={() =>
-                    Alert.alert(
+                  onPress={() =>Alert.alert(
                       'Close incident?',
                       'This removes it from the live queue for every desk.',
                       [
@@ -458,7 +459,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   }
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.resolveBtnText}>✓ CLOSE INCIDENT</Text>
+                  <Text style={styles.resolveBtnText}>CLOSE INCIDENT</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -468,7 +469,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
       {/* Logout Link */}
       <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
-        <Text style={styles.logoutBtnText}>🔒 LOGOUT OF HOSPITAL CAD DESK</Text>
+        <Text style={styles.logoutBtnText}>LOGOUT OF HOSPITAL CAD DESK</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -479,7 +480,7 @@ export default HospitalPortal;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a14',
+    backgroundColor: color.ground,
   } as ViewStyle,
   scrollContent: {
     padding: 16,
@@ -491,12 +492,12 @@ const styles = StyleSheet.create({
 
   // Hospital Hero Card
   hospitalHeroCard: {
-    backgroundColor: '#0f172a',
+    backgroundColor: color.surface,
     borderRadius: 18,
     padding: 18,
     marginBottom: 16,
     borderWidth: 1.5,
-    borderColor: '#253b5e',
+    borderColor: color.hairline,
   } as ViewStyle,
   heroTopRow: {
     flexDirection: 'row',
@@ -507,12 +508,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 12,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   hospitalIcon: {
     fontSize: 24,
@@ -520,7 +521,7 @@ const styles = StyleSheet.create({
   hospitalName: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     lineHeight: 22,
   } as TextStyle,
   deskTagRow: {
@@ -532,14 +533,14 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#22c55e',
+    backgroundColor: color.confirm,
     marginRight: 6,
   } as ViewStyle,
   deskTagText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
     letterSpacing: 0.5,
   } as TextStyle,
 
@@ -549,37 +550,37 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   statBox: {
     flex: 1,
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   statNumAlert: {
     fontSize: 20,
     fontWeight: '900',
-    color: '#ef4444',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.signal,
+    fontFamily: font.mono,
   } as TextStyle,
   statNumGreen: {
     fontSize: 20,
     fontWeight: '900',
-    color: '#22c55e',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.confirm,
+    fontFamily: font.mono,
   } as TextStyle,
   statNumCyan: {
     fontSize: 20,
     fontWeight: '900',
-    color: '#38bdf8',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.amber,
+    fontFamily: font.mono,
     marginHorizontal: 4,
   } as TextStyle,
   statLabel: {
     fontSize: 8,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#64748b',
+    color: color.textFaint,
     marginTop: 4,
     letterSpacing: 0.5,
     textAlign: 'center',
@@ -590,7 +591,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   } as ViewStyle,
   bedBtn: {
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     width: 22,
     height: 22,
     borderRadius: 11,
@@ -598,7 +599,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   } as ViewStyle,
   bedBtnText: {
-    color: '#38bdf8',
+    color: color.amber,
     fontSize: 14,
     fontWeight: '900',
     marginTop: -2,
@@ -615,29 +616,29 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#ef4444',
+    backgroundColor: color.signal,
     marginRight: 6,
   } as ViewStyle,
   sectionTitle: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#8ed5ff',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
   sectionMeta: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
   } as TextStyle,
 
   emptyStateCard: {
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
     borderStyle: 'dashed',
     marginBottom: 16,
   } as ViewStyle,
@@ -647,15 +648,15 @@ const styles = StyleSheet.create({
   } as TextStyle,
   emptyStateTitle: {
     fontSize: 14,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
     marginBottom: 8,
   } as TextStyle,
   emptyStateText: {
     fontSize: 12,
-    color: '#475569',
+    color: color.hairlineStrong,
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: '80%',
@@ -666,19 +667,19 @@ const styles = StyleSheet.create({
     gap: 12,
   } as ViewStyle,
   incidentCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   incidentCardPending: {
-    borderColor: '#ef4444',
-    backgroundColor: '#1a1014',
+    borderColor: color.signal,
+    backgroundColor: color.signalWash,
   } as ViewStyle,
   incidentCardEnRoute: {
-    borderColor: '#22c55e',
-    backgroundColor: '#0c1a14',
+    borderColor: color.confirm,
+    backgroundColor: color.confirmWash,
   } as ViewStyle,
 
   cardHeader: {
@@ -700,23 +701,23 @@ const styles = StyleSheet.create({
   incidentCodeText: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
 
   distanceBadge: {
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   distanceBadgeText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
 
   detailRow: {
@@ -727,76 +728,76 @@ const styles = StyleSheet.create({
   detailLabel: {
     width: 125,
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#64748b',
+    color: color.textFaint,
   } as TextStyle,
   detailValue: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
   detailValueCyan: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#38bdf8',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.amber,
+    fontFamily: font.mono,
   } as TextStyle,
 
   victimStatusTagRed: {
-    backgroundColor: '#3b1216',
+    backgroundColor: color.signalWash,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   victimStatusTextRed: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#fca5a5',
+    color: color.signalLift,
   } as TextStyle,
 
   victimStatusTagYellow: {
-    backgroundColor: '#382506',
+    backgroundColor: color.amberWash,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: '#eab308',
+    borderColor: color.amber,
   } as ViewStyle,
   victimStatusTextYellow: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#fde047',
+    color: color.amber,
   } as TextStyle,
 
   victimStatusTagGreen: {
-    backgroundColor: '#052e16',
+    backgroundColor: color.confirmWash,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: '#22c55e',
+    borderColor: color.confirm,
   } as ViewStyle,
   victimStatusTextGreen: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#86efac',
+    color: color.confirm,
   } as TextStyle,
 
   // Hash Box
   hashBox: {
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderRadius: 8,
     padding: 8,
     marginVertical: 10,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   hashHeaderRow: {
     flexDirection: 'row',
@@ -805,36 +806,36 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   hashLabel: {
     fontSize: 8,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#64748b',
+    fontFamily: font.mono,
+    color: color.textFaint,
     fontWeight: '700',
   } as TextStyle,
   hashVerifiedTag: {
     fontSize: 8,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#22c55e',
+    fontFamily: font.mono,
+    color: color.confirm,
     fontWeight: '900',
   } as TextStyle,
   hashText: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#34d399',
+    fontFamily: font.mono,
+    color: color.confirm,
   } as TextStyle,
 
   unitAssignedBanner: {
-    backgroundColor: '#052e16',
+    backgroundColor: color.confirmWash,
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#22c55e',
+    borderColor: color.confirm,
   } as ViewStyle,
   unitAssignedText: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#4ade80',
+    color: color.confirm,
   } as TextStyle,
 
   // Action Buttons Grid
@@ -842,7 +843,7 @@ const styles = StyleSheet.create({
     gap: 8,
   } as ViewStyle,
   dispatchUnitBtn: {
-    backgroundColor: '#b91c1c',
+    backgroundColor: color.signalDeep,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -851,12 +852,12 @@ const styles = StyleSheet.create({
   dispatchBtnText: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 1,
   } as TextStyle,
 
   reserveBedBtn: {
-    backgroundColor: '#0369a1',
+    backgroundColor: color.amber,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -865,7 +866,7 @@ const styles = StyleSheet.create({
   reserveBedBtnText: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     letterSpacing: 1,
   } as TextStyle,
 
@@ -875,69 +876,69 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   secCallBtn: {
     flex: 1,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 8,
     paddingVertical: 9,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   secCertBtn: {
     flex: 1.4,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 8,
     paddingVertical: 9,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#eab308',
+    borderColor: color.amber,
   } as ViewStyle,
   secMapBtn: {
     flex: 0.9,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 8,
     paddingVertical: 9,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: color.hairlineStrong,
   } as ViewStyle,
   secBtnText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
 
   resolveBtn: {
     marginTop: 10,
-    backgroundColor: '#0f1a2e',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 10,
     paddingVertical: 11,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: color.hairline,
   } as ViewStyle,
   resolveBtnText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
   } as TextStyle,
 
   logoutBtn: {
-    backgroundColor: '#162032',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#253b5e',
+    borderColor: color.hairline,
     marginTop: 20,
   } as ViewStyle,
   logoutBtnText: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
     letterSpacing: 1,
   } as TextStyle,
 });

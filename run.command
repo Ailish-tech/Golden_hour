@@ -215,6 +215,51 @@ else
 fi
 [ -n "$server_added" ] && warn "Added missing settings to server/.env."
 
+# --- Firebase service account (optional) ----------------------------------
+# Wire up a key the operator has placed on disk, without ever copying it into
+# the repository: this is a public repo, and a service-account private key in
+# it is a full project compromise. Only the PATH is written to server/.env.
+find_service_account() {
+  local dir f
+  for dir in "$HOME/.golden-hour" "$PWD/server" "$PWD"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*adminsdk*.json "$dir"/service-account.json "$dir"/serviceAccount.json; do
+      [ -f "$f" ] || continue
+      grep -q '"type"[[:space:]]*:[[:space:]]*"service_account"' "$f" 2>/dev/null && { printf '%s' "$f"; return 0; }
+    done
+  done
+  return 1
+}
+
+json_field() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2" 2>/dev/null; }
+
+if ! env_has server/.env FIREBASE_SERVICE_ACCOUNT && ! env_has server/.env GOOGLE_APPLICATION_CREDENTIALS; then
+  if SA_PATH=$(find_service_account); then
+    SA_PROJECT=$(json_field "$SA_PATH" project_id)
+    printf 'FIREBASE_SERVICE_ACCOUNT=%s\n' "$SA_PATH" >> server/.env
+    # Real credentials supersede the local stand-in; leaving both would accept
+    # unverified tokens on a server that is otherwise properly configured.
+    if env_has server/.env ALLOW_INSECURE_NO_AUTH; then
+      grep -v '^[[:space:]]*ALLOW_INSECURE_NO_AUTH=' server/.env > server/.env.tmp && mv server/.env.tmp server/.env
+      warn "Removed ALLOW_INSECURE_NO_AUTH — real credentials take over."
+    fi
+    ok "Firebase key found: $(basename "$SA_PATH") (project ${SA_PROJECT:-unknown})"
+
+    APP_PROJECT=$(grep -E '^[[:space:]]*EXPO_PUBLIC_FIREBASE_PROJECT_ID=' app/.env 2>/dev/null | cut -d= -f2- | tr -d ' ')
+    if [ -n "$SA_PROJECT" ] && [ -n "$APP_PROJECT" ] && [ "$SA_PROJECT" != "$APP_PROJECT" ]; then
+      die "The key and the app name different Firebase projects:
+       key: $SA_PROJECT
+       app: $APP_PROJECT
+
+     The Admin SDK checks a token's audience against its own project, so every
+     request would fail with \"incorrect audience\". Point both at one project."
+    fi
+    if [ -z "$APP_PROJECT" ]; then
+      warn "Key is for $SA_PROJECT but app/.env has no EXPO_PUBLIC_FIREBASE_PROJECT_ID — the app will sign in locally."
+    fi
+  fi
+fi
+
 # --- app ------------------------------------------------------------------
 app_added=""
 ensure_env app/.env EXPO_PUBLIC_API_URL "http://localhost:$SERVER_PORT" && app_added="yes"

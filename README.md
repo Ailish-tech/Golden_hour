@@ -160,6 +160,28 @@ guidance, SOS, dispatch and the CPR metronome all work normally. For voice
 answers on a device, build a development client (`npx expo prebuild`, then
 `npm run ios` / `npm run android`).
 
+### Using a Firebase service-account key
+
+Put the key anywhere `run.command` looks — `~/.golden-hour/`, `server/`, or the
+project root — and it is picked up automatically:
+
+```bash
+mkdir -p ~/.golden-hour
+mv ~/Downloads/<project>-firebase-adminsdk-*.json ~/.golden-hour/
+./run.command
+```
+
+Only the key's PATH is written to `server/.env`; the key itself is never copied
+into the repository, which is public. `.gitignore` also refuses the usual
+filenames, but keeping the file outside the tree is the real protection.
+
+Wiring a key supersedes local development auth: `ALLOW_INSECURE_NO_AUTH` is
+removed from `server/.env`, because a server holding real credentials must not
+also accept unverified tokens. The launcher refuses to start if the key's
+`project_id` and the app's `EXPO_PUBLIC_FIREBASE_PROJECT_ID` name different
+projects, rather than letting every request fail later with
+`Firebase ID token has incorrect audience`.
+
 ### Granting hospital access
 
 Hospital access exposes live victim coordinates, so it is provisioned by an

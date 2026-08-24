@@ -21,6 +21,10 @@ import {
   TextStyle,
   ImageStyle,
 } from 'react-native';
+import { color, font } from './theme';
+import {
+  PulseIcon,
+} from './icons';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 
@@ -56,7 +60,7 @@ const VOICE_LOCALE = 'en-US';
 // ---------------------------------------------------------------------------
 interface SpeechRecognitionApi {
   ExpoSpeechRecognitionModule: {
-    requestPermissionsAsync: () => Promise<{ granted: boolean }>;
+    requestPermissionsAsync: () =>Promise<{ granted: boolean }>;
     start: (options: { lang: string; interimResults: boolean; continuous: boolean }) => void;
     abort: () => void;
   };
@@ -344,8 +348,8 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
   const startListening = useCallback((): void => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const SpeechRec =
-        (window as unknown as { SpeechRecognition?: new () => IWebSpeechRecognition }).SpeechRecognition ||
-        (window as unknown as { webkitSpeechRecognition?: new () => IWebSpeechRecognition }).webkitSpeechRecognition;
+        (window as unknown as { SpeechRecognition?: new () =>IWebSpeechRecognition }).SpeechRecognition ||
+        (window as unknown as { webkitSpeechRecognition?: new () =>IWebSpeechRecognition }).webkitSpeechRecognition;
 
       if (SpeechRec) {
         try {
@@ -527,7 +531,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
       {/* 1. Header HUD & Mic Status */}
       <View style={styles.hudTopRow}>
         <View style={styles.aiTag}>
-          <Text style={styles.aiTagText}>🤖 SEVERE TRAUMA PROTOCOL</Text>
+          <Text style={styles.aiTagText}>SEVERE TRAUMA PROTOCOL</Text>
         </View>
         <View style={styles.micStatusTag}>
           <View
@@ -535,12 +539,12 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
               styles.micDot,
               {
               backgroundColor: !voiceAvailable
-                ? '#64748b'
+                ? color.textFaint
                 : isListening
-                ? '#22c55e'
+                ? color.confirm
                 : isSpeaking
-                ? '#38bdf8'
-                : '#eab308',
+                ? color.amber
+                : color.amber,
             },
             ]}
           />
@@ -581,7 +585,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
                   onPress={() => handleTransition('yes')}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.yesBtnText}>✓ YES</Text>
+                  <Text style={styles.yesBtnText}>YES</Text>
                 </TouchableOpacity>
               )}
 
@@ -591,22 +595,21 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
                   onPress={() => handleTransition('no')}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.noBtnText}>✕ NO</Text>
+                  <Text style={styles.noBtnText}>NO</Text>
                 </TouchableOpacity>
               )}
             </View>
           )}
 
           {!voiceAvailable && currentNode.action !== 'auto_advance' && (
-            <Text style={styles.voiceUnavailableNote}>
-              Voice answers need a development build — spoken guidance still works, tap YES or NO.
+            <Text style={styles.voiceUnavailableNote}>Voice answers need a development build — spoken guidance still works, tap YES or NO.
             </Text>
           )}
 
           {/* Auto-advance indicator for instruction-only nodes */}
           {currentNode.action === 'auto_advance' && (
             <View style={styles.autoAdvanceBanner}>
-              <Text style={styles.autoAdvanceText}>⏳ AUTO-ADVANCING TO NEXT STEP...</Text>
+              <Text style={styles.autoAdvanceText}>AUTO-ADVANCING TO NEXT STEP...</Text>
             </View>
           )}
         </View>
@@ -616,27 +619,23 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
       {cprActive && (
         <View style={styles.cprCard}>
           <View style={styles.cprHeaderRow}>
-            <Text style={styles.cprTitle}>🫀 CPR PACING METRONOME (110 BPM)</Text>
+            <Text style={styles.cprTitle}>CPR PACING METRONOME (110 BPM)</Text>
             <Text style={styles.cprSetBadge}>SET #{setCount}</Text>
           </View>
 
           {/* Glowing Heart Metronome Actuator */}
           <Animated.View style={[styles.heartContainer, { transform: [{ scale: pulseAnim }] }]}>
-            <Text style={styles.heartEmoji}>❤️</Text>
+            <PulseIcon size={20} color={color.text} />
             <Text style={styles.cprCounterText}>{beatCount}</Text>
             <Text style={styles.cprTargetSubtext}>/ 30 PUSHES</Text>
           </Animated.View>
 
           {/* Rescue Breath Guidance */}
           <View style={styles.cprInstructionBox}>
-            <Text style={styles.cprInstructionTitle}>
-              ⚡ PUSH HARD & FAST • CENTER OF CHEST • LOCK ELBOWS STRAIGHT
+            <Text style={styles.cprInstructionTitle}>PUSH HARD & FAST • CENTER OF CHEST • LOCK ELBOWS STRAIGHT</Text>
+            <Text style={styles.cprInstructionDetail}>Depth: 2+ inches • Rate: 100–120/min • Full recoil • Ignore rib cracking
             </Text>
-            <Text style={styles.cprInstructionDetail}>
-              Depth: 2+ inches • Rate: 100–120/min • Full recoil • Ignore rib cracking
-            </Text>
-            <Text style={styles.cprInstructionDetail}>
-              COMPRESSIONS ONLY — NO MOUTH-TO-MOUTH
+            <Text style={styles.cprInstructionDetail}>COMPRESSIONS ONLY — NO MOUTH-TO-MOUTH
             </Text>
           </View>
 
@@ -648,7 +647,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
               activeOpacity={0.8}
             >
               <Text style={styles.cprStopBtnText}>
-                {cprIntervalRef.current ? '⏸ PAUSE' : '▶ RESUME'}
+                {cprIntervalRef.current ? 'PAUSE' : 'RESUME'}
               </Text>
             </TouchableOpacity>
 
@@ -657,7 +656,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
               onPress={startCPRMetronome}
               activeOpacity={0.8}
             >
-              <Text style={styles.cprResetBtnText}>🔄 RESTART SET</Text>
+              <Text style={styles.cprResetBtnText}>RESTART SET</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -680,28 +679,28 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   } as ViewStyle,
   aiTag: {
-    backgroundColor: '#0c2744',
+    backgroundColor: color.surfaceMuted,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: color.amber,
   } as ViewStyle,
   aiTagText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: color.amber,
   } as TextStyle,
   micStatusTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ViewStyle,
   micDot: {
     width: 6,
@@ -711,32 +710,32 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   micStatusText: {
     fontSize: 9,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: color.textMuted,
   } as TextStyle,
 
   // Question Card
   questionCard: {
-    backgroundColor: '#111827',
+    backgroundColor: color.surface,
     borderRadius: 16,
     padding: 18,
     borderWidth: 1.5,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
     marginBottom: 12,
   } as ViewStyle,
   questionNodeTitle: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#facc15',
+    color: color.amber,
     letterSpacing: 1,
     marginBottom: 6,
   } as TextStyle,
   questionText: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#ffffff',
+    color: color.text,
     lineHeight: 24,
     marginBottom: 16,
   } as TextStyle,
@@ -745,9 +744,9 @@ const styles = StyleSheet.create({
     height: 160,
     borderRadius: 12,
     marginBottom: 16,
-    backgroundColor: '#0a0f1d',
+    backgroundColor: color.groundDeep,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: color.hairline,
   } as ImageStyle,
 
   buttonActionRow: {
@@ -756,44 +755,44 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   yesBtn: {
     flex: 1,
-    backgroundColor: '#052e16',
+    backgroundColor: color.confirmWash,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#22c55e',
+    borderColor: color.confirm,
   } as ViewStyle,
   yesBtnText: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#4ade80',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.confirm,
+    fontFamily: font.mono,
     letterSpacing: 1,
   } as TextStyle,
   noBtn: {
     flex: 1,
-    backgroundColor: '#3b1216',
+    backgroundColor: color.signalWash,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   noBtnText: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#fca5a5',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.signalLift,
+    fontFamily: font.mono,
     letterSpacing: 1,
   } as TextStyle,
 
   // CPR Metronome Card
   cprCard: {
-    backgroundColor: '#1a0c10',
+    backgroundColor: color.signalWash,
     borderRadius: 18,
     padding: 18,
     borderWidth: 2,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
     alignItems: 'center',
     marginBottom: 12,
   } as ViewStyle,
@@ -806,22 +805,22 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   cprTitle: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#fca5a5',
+    color: color.signalLift,
     letterSpacing: 1,
   } as TextStyle,
   cprSetBadge: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '900',
-    color: '#facc15',
-    backgroundColor: '#3b2405',
+    color: color.amber,
+    backgroundColor: color.amberWash,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#eab308',
+    borderColor: color.amber,
   } as TextStyle,
 
   heartContainer: {
@@ -836,37 +835,37 @@ const styles = StyleSheet.create({
   cprCounterText: {
     fontSize: 48,
     fontWeight: '900',
-    color: '#ffffff',
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    color: color.text,
+    fontFamily: font.mono,
   } as TextStyle,
   cprTargetSubtext: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
-    color: '#fca5a5',
+    fontFamily: font.mono,
+    color: color.signalLift,
     fontWeight: '700',
     marginTop: -4,
   } as TextStyle,
 
   cprInstructionBox: {
-    backgroundColor: '#2e0f15',
+    backgroundColor: color.signalWash,
     borderRadius: 10,
     padding: 12,
     width: '100%',
     alignItems: 'center',
     marginVertical: 14,
     borderWidth: 1,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   cprInstructionTitle: {
     fontSize: 12,
     fontWeight: '900',
-    color: '#ffffff',
+    color: color.text,
     textAlign: 'center',
     marginBottom: 4,
   } as TextStyle,
   cprInstructionDetail: {
     fontSize: 10,
-    color: '#fca5a5',
+    color: color.signalLift,
     textAlign: 'center',
   } as TextStyle,
 
@@ -877,38 +876,38 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   cprStopBtn: {
     flex: 1,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: color.hairlineStrong,
   } as ViewStyle,
   cprStopBtnText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#cbd5e1',
+    color: color.textMuted,
   } as TextStyle,
   cprResetBtn: {
     flex: 1,
-    backgroundColor: '#1e293b',
+    backgroundColor: color.hairline,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#ef4444',
+    borderColor: color.signal,
   } as ViewStyle,
   cprResetBtnText: {
     fontSize: 10,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#fca5a5',
+    color: color.signalLift,
   } as TextStyle,
 
   voiceUnavailableNote: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: color.textMuted,
     textAlign: 'center',
     marginTop: 10,
     lineHeight: 15,
@@ -916,20 +915,20 @@ const styles = StyleSheet.create({
 
   // Auto-advance indicator
   autoAdvanceBanner: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: color.surfaceMuted,
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#eab308',
+    borderColor: color.amber,
     marginTop: 12,
   } as ViewStyle,
   autoAdvanceText: {
     fontSize: 11,
-    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontFamily: font.mono,
     fontWeight: '800',
-    color: '#facc15',
+    color: color.amber,
     letterSpacing: 1,
   } as TextStyle,
 });
