@@ -40,7 +40,13 @@
           "locationWhenInUsePermission": "Samaritan Shield needs your location to send emergency coordinates to first responders."
         }
       ],
-      "@react-native-voice/voice",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Samaritan Shield needs microphone access for hands-free emergency triage.",
+          "speechRecognitionPermission": "Samaritan Shield uses speech recognition so you can answer triage questions without letting go of the victim."
+        }
+      ],
       "expo-asset"
     ]
   }

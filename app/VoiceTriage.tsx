@@ -23,6 +23,10 @@ import {
 } from 'react-native';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
+import {
+  ExpoSpeechRecognitionModule,
+  addSpeechRecognitionListener,
+} from 'expo-speech-recognition';
 
 import { authedFetch } from './api';
 import {
@@ -35,8 +39,6 @@ import {
 // ---------------------------------------------------------------------------
 // Types & Config
 // ---------------------------------------------------------------------------
-type EnginePhase = 'speaking' | 'listening' | 'processing' | 'action';
-
 interface VoiceTriageProps {
   onDismiss?: () => void;
   isActive: boolean;
@@ -67,28 +69,28 @@ interface IWebSpeechRecognition {
 export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, incidentId }) => {
   // -- State ---------------------------------------------------------------
   const [currentNodeId, setCurrentNodeId] = useState<string>(INITIAL_NODE_ID);
-  const [enginePhase, setEnginePhase] = useState<EnginePhase>('speaking');
-  const [spokenText, setSpokenText] = useState<string>('');
+  // Bumped on every transition so re-entering the same node (a "no" that loops
+  // back to itself) still re-speaks and re-opens the mic.
+  const [visitToken, setVisitToken] = useState<number>(0);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [heardText, setHeardText] = useState<string>('');
   const [cprActive, setCprActive] = useState<boolean>(false);
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [beatCount, setBeatCount] = useState<number>(0);
   const [setCount, setSetCount] = useState<number>(1);
-  const [micSupported, setMicSupported] = useState<boolean>(true);
-  const [nodeHistory, setNodeHistory] = useState<string[]>([]);
 
   // -- Refs ----------------------------------------------------------------
   const cprIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const webRecognitionRef = useRef<IWebSpeechRecognition | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  // Counters live in refs so the metronome callback never has to be rebuilt
+  // mid-run: a changing identity used to retrigger the speak effect.
+  const beatRef = useRef<number>(0);
+  const setRef = useRef<number>(1);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // -- Animations ----------------------------------------------------------
   const pulseAnim = useRef<Animated.Value>(new Animated.Value(1)).current;
-  const micPulse = useRef<Animated.Value>(new Animated.Value(1)).current;
-  const fadeAnim = useRef<Animated.Value>(new Animated.Value(0)).current;
 
   // Current Node
   const currentNode: TriageNode = TriageTree[currentNodeId] || TriageTree[INITIAL_NODE_ID];
@@ -115,15 +117,30 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
   // -----------------------------------------------------------------------
   // Web Audio CPR Metronome Tone (110 BPM Click)
   // -----------------------------------------------------------------------
+  /**
+   * One AudioContext for the whole session. Constructing one per click (every
+   * ~545ms) hit the browser's concurrent-context cap after roughly 30 seconds,
+   * so the metronome went silent partway into CPR.
+   */
+  const getAudioContext = useCallback((): AudioContext | null => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    if (audioCtxRef.current) {
+      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+      return audioCtxRef.current;
+    }
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+    audioCtxRef.current = new AudioCtx();
+    return audioCtxRef.current;
+  }, []);
+
   const playMetronomeClick = useCallback((): void => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    {
       try {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        if (ctx.state === 'suspended') ctx.resume();
+        const ctx = getAudioContext();
+        if (!ctx) return;
 
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -140,62 +157,66 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
         osc.stop(ctx.currentTime + 0.08);
       } catch (_e) {}
     }
-  }, []);
+  }, [getAudioContext]);
 
   // -----------------------------------------------------------------------
   // CPR Metronome Loop (110 BPM, 30 Compressions / 2 Breaths)
   // -----------------------------------------------------------------------
+  /**
+   * Compressions-only CPR at 110 BPM, in sets of 30.
+   *
+   * Counters live in refs so this callback keeps a stable identity for the
+   * whole run. Previously setSetCount rebuilt it at the end of every set,
+   * which retriggered the speak effect: the node re-spoke its full text and
+   * restarted the metronome, while a setTimeout restarted it again 1.2s later.
+   * The two paths fought, resetting the beat count early and doubling the
+   * coaching audio.
+   */
   const startCPRMetronome = useCallback((): void => {
-    setCprActive(true);
-    setBeatCount(0);
-    syncTelemetry('CPR_ACTIVE', 0, setCount);
-
     if (cprIntervalRef.current) clearInterval(cprIntervalRef.current);
 
+    beatRef.current = 0;
+    setBeatCount(0);
+    setCprActive(true);
+    syncTelemetry('CPR_ACTIVE', 0, setRef.current);
+
     cprIntervalRef.current = setInterval(() => {
-      setBeatCount((prev) => {
-        const next = prev + 1;
-        playMetronomeClick();
+      if (!isMountedRef.current) return;
 
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+      beatRef.current += 1;
+      const beat = beatRef.current;
+      setBeatCount(beat);
+      playMetronomeClick();
+
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+      }
+
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.2, duration: 60, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.0, duration: 120, useNativeDriver: true }),
+      ]).start();
+
+      if (beat % 5 === 0) {
+        syncTelemetry('CPR_ACTIVE', beat, setRef.current);
+      }
+
+      // End of a set: roll straight into the next one. No pause for breaths —
+      // this protocol is compressions only.
+      if (beat >= 30) {
+        beatRef.current = 0;
+        setRef.current += 1;
+        setSetCount(setRef.current);
+        syncTelemetry('CPR_ACTIVE', 30, setRef.current);
+
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance('Keep going. Do not stop.');
+          utterance.rate = 1.1;
+          window.speechSynthesis.speak(utterance);
         }
-
-        // Pulse Animation on Beat
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 60, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1.0, duration: 120, useNativeDriver: true }),
-        ]).start();
-
-        // Sync compression telemetry to server every 5 beats
-        if (next % 5 === 0 || next === 30) {
-          syncTelemetry('CPR_ACTIVE', next, setCount);
-        }
-
-        if (next >= 30) {
-          // Compressions-only CPR — no rescue breaths.
-          // Immediately restart the next set of 30.
-          if (cprIntervalRef.current) clearInterval(cprIntervalRef.current);
-          setSetCount((s) => s + 1);
-
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-            const nextSetUtterance = new SpeechSynthesisUtterance('Keep going. Next set. Do not stop.');
-            nextSetUtterance.rate = 1.1;
-            window.speechSynthesis.speak(nextSetUtterance);
-          }
-
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              startCPRMetronome();
-            }
-          }, 1200);
-
-          return 30;
-        }
-        return next;
-      });
+      }
     }, CPR_INTERVAL_MS);
-  }, [playMetronomeClick, pulseAnim, syncTelemetry, setCount]);
+  }, [playMetronomeClick, pulseAnim, syncTelemetry]);
 
   const stopCPRMetronome = useCallback((): void => {
     if (cprIntervalRef.current) {
@@ -204,6 +225,18 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
     }
     setCprActive(false);
   }, []);
+
+  /** Resume from where the current set left off, rather than restarting at 1. */
+  const resumeCPRMetronome = useCallback((): void => {
+    if (cprIntervalRef.current) return;
+    setCprActive(true);
+    cprIntervalRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+      beatRef.current = beatRef.current >= 30 ? 1 : beatRef.current + 1;
+      setBeatCount(beatRef.current);
+      playMetronomeClick();
+    }, CPR_INTERVAL_MS);
+  }, [playMetronomeClick]);
 
   // -----------------------------------------------------------------------
   // Node Navigation & Triage Transition
@@ -231,19 +264,42 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
       }
 
       if (nextNodeId && TriageTree[nextNodeId]) {
+        // A node whose "no" branch points at itself (bleeding not yet
+        // controlled, not yet in CPR position) sets the same id, which React
+        // bails out on. The token makes the effect re-run so the instruction
+        // is repeated and the mic reopens.
         setCurrentNodeId(nextNodeId);
-      } else if (node.action) {
-        if (node.action === 'start_cpr') {
-          startCPRMetronome();
-        }
+        setVisitToken((t) => t + 1);
       }
     },
-    [currentNodeId, startCPRMetronome, syncTelemetry]
+    [currentNodeId, syncTelemetry]
   );
 
   // -----------------------------------------------------------------------
-  // Speech Recognition (Keyword Spotting)
+  // Speech Recognition (keyword spotting)
   // -----------------------------------------------------------------------
+
+  /** Maps a heard phrase onto a yes/no branch. Returns false if it matched neither. */
+  const applyTranscript = useCallback(
+    (raw: string): boolean => {
+      const transcript = raw.toLowerCase().trim();
+      setHeardText(transcript);
+
+      // Check "no" first: "no" is a substring of words like "nope" but also of
+      // "know", so require word-ish boundaries on both sides.
+      if (/\b(no|nope|negative|not)\b/.test(transcript)) {
+        handleTransition('no');
+        return true;
+      }
+      if (/\b(yes|yeah|yep|yup|ok|okay|ready|done|affirmative)\b/.test(transcript)) {
+        handleTransition('yes');
+        return true;
+      }
+      return false;
+    },
+    [handleTransition]
+  );
+
   const startListening = useCallback((): void => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const SpeechRec =
@@ -258,22 +314,12 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           rec.lang = VOICE_LOCALE;
 
           rec.onstart = () => {
-            if (isMountedRef.current) {
-              setIsListening(true);
-              setEnginePhase('listening');
-            }
+            if (isMountedRef.current) setIsListening(true);
           };
 
           rec.onresult = (event) => {
             if (!isMountedRef.current) return;
-            const transcript = event.results[0][0].transcript.toLowerCase().trim();
-            setHeardText(transcript);
-
-            if (transcript.includes('yes') || transcript.includes('yeah') || transcript.includes('ok') || transcript.includes('ready')) {
-              handleTransition('yes');
-            } else if (transcript.includes('no') || transcript.includes('not') || transcript.includes('nope')) {
-              handleTransition('no');
-            }
+            applyTranscript(event.results[0][0].transcript);
           };
 
           rec.onerror = () => { if (isMountedRef.current) setIsListening(false); };
@@ -282,11 +328,28 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           webRecognitionRef.current = rec;
           rec.start();
         } catch (_e) {
-          setMicSupported(false);
+          // Mic unavailable — the on-screen YES/NO buttons remain the path.
         }
       }
+      return;
     }
-  }, [handleTransition]);
+
+    // Native: previously nothing listened here at all, so "hands-free" triage
+    // only ever worked in a browser.
+    (async () => {
+      try {
+        const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+        if (!perm.granted) return;
+        ExpoSpeechRecognitionModule.start({
+          lang: VOICE_LOCALE,
+          interimResults: false,
+          continuous: false,
+        });
+      } catch (_e) {
+        // Fall back to the on-screen buttons.
+      }
+    })();
+  }, [applyTranscript]);
 
   // -----------------------------------------------------------------------
   // Speak Current Node
@@ -294,7 +357,6 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
   const speakCurrentNode = useCallback(
     (node: TriageNode): void => {
       setIsSpeaking(true);
-      setEnginePhase('speaking');
 
       if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
         try {
@@ -339,27 +401,56 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
   useEffect(() => {
     if (!isActive) return;
     const node = TriageTree[currentNodeId];
-    if (node) {
-      setSpokenText(node.text);
-      speakCurrentNode(node);
+    if (!node) return;
 
-      if (node.action === 'start_cpr') {
-        startCPRMetronome();
-      }
+    speakCurrentNode(node);
 
-      // Auto-advance nodes (e.g. call_108, victim_responsive)
-      // These are instruction-only nodes that don't wait for yes/no.
-      if (node.action === 'auto_advance' && node.autoAdvanceTo) {
-        const delay = node.autoAdvanceDelayMs || 3000;
-        const timer = setTimeout(() => {
-          if (isMountedRef.current && TriageTree[node.autoAdvanceTo!]) {
-            setCurrentNodeId(node.autoAdvanceTo!);
-          }
-        }, delay);
-        return () => clearTimeout(timer);
-      }
+    // Instruction-only nodes advance on a timer rather than a yes/no.
+    if (node.action === 'auto_advance' && node.autoAdvanceTo) {
+      const timer = setTimeout(() => {
+        if (isMountedRef.current && TriageTree[node.autoAdvanceTo!]) {
+          setCurrentNodeId(node.autoAdvanceTo!);
+          setVisitToken((t) => t + 1);
+        }
+      }, node.autoAdvanceDelayMs || 3000);
+      return () => clearTimeout(timer);
     }
-  }, [currentNodeId, isActive, speakCurrentNode, startCPRMetronome]);
+  }, [currentNodeId, visitToken, isActive, speakCurrentNode]);
+
+  // The metronome starts once, when the tree reaches the CPR node.
+  useEffect(() => {
+    if (!isActive) return;
+    if (TriageTree[currentNodeId]?.action === 'start_cpr' && !cprIntervalRef.current) {
+      startCPRMetronome();
+    }
+  }, [currentNodeId, isActive, startCPRMetronome]);
+
+  // Native speech-recognition events
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const onResult = addSpeechRecognitionListener('result', (event) => {
+      if (!isMountedRef.current) return;
+      const transcript = event.results?.[0]?.transcript;
+      if (transcript) applyTranscript(transcript);
+    });
+    const onEnd = addSpeechRecognitionListener('end', () => {
+      if (isMountedRef.current) setIsListening(false);
+    });
+    const onStart = addSpeechRecognitionListener('start', () => {
+      if (isMountedRef.current) setIsListening(true);
+    });
+    const onError = addSpeechRecognitionListener('error', () => {
+      if (isMountedRef.current) setIsListening(false);
+    });
+
+    return () => {
+      onResult.remove();
+      onEnd.remove();
+      onStart.remove();
+      onError.remove();
+    };
+  }, [applyTranscript]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -369,6 +460,15 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
       stopCPRMetronome();
       if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
+      }
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
+      if (Platform.OS !== 'web') {
+        try {
+          ExpoSpeechRecognitionModule.abort();
+        } catch (_e) {
+          // nothing listening
+        }
       }
     };
   }, [stopCPRMetronome]);
@@ -401,7 +501,7 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           <Text style={styles.questionNodeTitle}>
             {currentNode.step ? `STEP ${currentNode.step} • ` : ''}{currentNode.id.replace(/_/g, ' ').toUpperCase()}
           </Text>
-          <Text style={styles.questionText}>{spokenText || currentNode.text}</Text>
+          <Text style={styles.questionText}>{currentNode.text}</Text>
 
           {currentNode.imageSource && (
             <Image
@@ -477,21 +577,20 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
           <View style={styles.cprControlsRow}>
             <TouchableOpacity
               style={styles.cprStopBtn}
-              onPress={stopCPRMetronome}
+              onPress={cprIntervalRef.current ? stopCPRMetronome : resumeCPRMetronome}
               activeOpacity={0.8}
             >
-              <Text style={styles.cprStopBtnText}>⏸ PAUSE METRONOME</Text>
+              <Text style={styles.cprStopBtnText}>
+                {cprIntervalRef.current ? '⏸ PAUSE' : '▶ RESUME'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.cprResetBtn}
-              onPress={() => {
-                stopCPRMetronome();
-                startCPRMetronome();
-              }}
+              onPress={startCPRMetronome}
               activeOpacity={0.8}
             >
-              <Text style={styles.cprResetBtnText}>🔄 RESTART CPR</Text>
+              <Text style={styles.cprResetBtnText}>🔄 RESTART SET</Text>
             </TouchableOpacity>
           </View>
         </View>
