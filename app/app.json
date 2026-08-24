@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Samaritan Shield",
+    "slug": "samaritan-shield",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0f"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Samaritan Shield needs your location to send emergency coordinates to first responders.",
+        "NSSpeechRecognitionUsageDescription": "Samaritan Shield uses speech recognition to guide you through emergency triage hands-free.",
+        "NSMicrophoneUsageDescription": "Samaritan Shield needs microphone access for voice-guided emergency triage.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0f"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Samaritan Shield needs your location to send emergency coordinates to first responders."
+        }
+      ],
+      "@react-native-voice/voice",
+      "expo-asset"
+    ]
+  }
+}

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Samaritan Shield - Legal Protection Certificate</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-fixed": "#001e2c",
+                        "on-secondary": "#68000c",
+                        "error": "#ffb4ab",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#544600",
+                        "on-primary": "#00354a",
+                        "on-secondary-fixed": "#410005",
+                        "on-tertiary": "#3a3000",
+                        "on-primary-fixed-variant": "#004c69",
+                        "secondary": "#ffb3ae",
+                        "inverse-surface": "#e4e1ef",
+                        "primary-fixed": "#c4e7ff",
+                        "background": "#13121c",
+                        "inverse-primary": "#00668a",
+                        "surface-tint": "#7bd0ff",
+                        "surface-bright": "#393843",
+                        "on-tertiary-container": "#514300",
+                        "secondary-container": "#e00328",
+                        "on-background": "#e4e1ef",
+                        "on-surface": "#e4e1ef",
+                        "on-tertiary-fixed": "#221b00",
+                        "surface-container-lowest": "#0d0d17",
+                        "surface-container-high": "#292933",
+                        "surface-dim": "#13121c",
+                        "primary-container": "#38bdf8",
+                        "surface-variant": "#34343e",
+                        "on-secondary-fixed-variant": "#930016",
+                        "surface-container-highest": "#34343e",
+                        "primary-fixed-dim": "#7bd0ff",
+                        "secondary-fixed-dim": "#ffb3ae",
+                        "primary": "#8ed5ff",
+                        "surface": "#13121c",
+                        "tertiary-fixed-dim": "#e9c400",
+                        "on-primary-container": "#004965",
+                        "tertiary-container": "#d0af00",
+                        "on-error": "#690005",
+                        "surface-container": "#1f1f29",
+                        "surface-container-low": "#1b1b24",
+                        "outline-variant": "#3e484f",
+                        "inverse-on-surface": "#302f3a",
+                        "tertiary": "#f0ca00",
+                        "secondary-fixed": "#ffdad7",
+                        "on-surface-variant": "#bdc8d1",
+                        "tertiary-fixed": "#ffe16d",
+                        "on-secondary-container": "#fff1f0",
+                        "error-container": "#93000a",
+                        "outline": "#87929a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin-desktop": "32px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px",
+                        "container-max": "1440px",
+                        "unit": "4px"
+                    },
+                    "fontFamily": {
+                        "telemetry-data": ["JetBrains Mono"],
+                        "display-lg": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "telemetry-data": ["14px", { "lineHeight": "20px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "800" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "700" }],
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.1em", "fontWeight": "700" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: theme('colors.background');
+            color: theme('colors.on-background');
+            background-image: 
+                linear-gradient(rgba(142, 213, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(142, 213, 255, 0.03) 1px, transparent 1px);
+            background-size: 32px 32px;
+        }
+        
+        .tactile-glow {
+            box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.2);
+        }
+        
+        .gold-border {
+            border: 2px solid theme('colors.tertiary');
+            box-shadow: inset 0 0 15px rgba(208, 175, 0, 0.2), 0 0 15px rgba(208, 175, 0, 0.2);
+        }
+        
+        .seal-stamp {
+            border: 3px solid theme('colors.error');
+            color: theme('colors.error');
+            transform: rotate(-15deg);
+            opacity: 0.8;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            display: inline-block;
+            box-shadow: 0 0 10px rgba(255, 180, 171, 0.3);
+        }
+        
+        .cyber-card {
+            background: rgba(13, 30, 56, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(142, 213, 255, 0.4);
+        }
+        
+        .scanner-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: theme('colors.primary');
+            opacity: 0.5;
+            box-shadow: 0 0 10px theme('colors.primary');
+            animation: scan 5s linear infinite;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        @keyframes scan {
+            0% { top: 0; opacity: 0; }
+            5% { opacity: 0.5; }
+            95% { opacity: 0.5; }
+            100% { top: 100%; opacity: 0; }
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="min-h-screen flex flex-col font-body-md antialiased overflow-x-hidden relative">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-surface/70 dark:bg-surface/70 backdrop-blur-xl border-b border-primary/40 shadow-[0_0_15px_rgba(142,213,255,0.1)]">
+<div class="flex items-center justify-between px-margin-mobile md:px-margin-desktop h-16 w-full">
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-primary/10 transition-colors active:scale-95 duration-100 p-2 rounded-full">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back</span>
+</button>
+<h1 class="font-headline-sm text-headline-sm font-black text-primary dark:text-primary tracking-widest uppercase">SAMARITAN_SHIELD</h1>
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-primary/10 transition-colors active:scale-95 duration-100 p-2 rounded-full">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">sensors</span>
+</button>
+</div>
+</header>
+<!-- Main Content (Canvas) -->
+<!-- Navigation Shell Suppressed: Transactional/Task-Focused Screen (Document Preview) -->
+<main class="flex-1 mt-16 mb-safe p-margin-mobile md:p-margin-desktop flex items-center justify-center min-h-[calc(100vh-64px)] relative z-10">
+<div class="w-full max-w-3xl cyber-card rounded-xl overflow-hidden relative group">
+<div class="scanner-line hidden group-hover:block"></div>
+<!-- Document Frame -->
+<div class="m-4 md:m-8 p-1 gold-border rounded-lg relative bg-surface-container-low/50">
+<!-- Inner Content Container -->
+<div class="p-6 md:p-10 border border-tertiary/30 rounded">
+<!-- Header -->
+<div class="text-center mb-8 border-b border-tertiary/20 pb-6 relative">
+<div class="absolute left-0 top-0 opacity-20">
+<span class="material-symbols-outlined text-tertiary" style="font-size: 48px;">local_police</span>
+</div>
+<div class="absolute right-0 top-0 opacity-20">
+<span class="material-symbols-outlined text-tertiary" style="font-size: 48px;">gavel</span>
+</div>
+<p class="font-label-caps text-label-caps text-tertiary mb-2">REPUBLIC OF INDIA • STATUTORY EMERGENCY RECORD</p>
+<h2 class="font-headline-sm md:font-headline-lg text-headline-sm md:text-headline-lg text-on-surface font-bold uppercase tracking-wide">
+                            Good Samaritan Legal Protection Certificate
+                        </h2>
+<p class="font-telemetry-data text-telemetry-data text-on-surface-variant mt-2">(Section 134A Motor Vehicles Act)</p>
+</div>
+<!-- Telemetry Data Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+<div class="bg-black/40 p-4 border border-primary/40 rounded flex flex-col justify-center">
+<span class="font-label-caps text-label-caps text-primary/70 mb-1">RESPONDER ID</span>
+<span class="font-telemetry-data text-telemetry-data text-on-surface">SHIELD-USER-001</span>
+</div>
+<div class="bg-black/40 p-4 border border-primary/40 rounded flex flex-col justify-center">
+<span class="font-label-caps text-label-caps text-primary/70 mb-1">GPS COORDINATES</span>
+<span class="font-telemetry-data text-telemetry-data text-on-surface">28.6139° N, 77.2090° E</span>
+</div>
+<div class="bg-black/40 p-4 border border-primary/40 rounded flex flex-col justify-center">
+<span class="font-label-caps text-label-caps text-primary/70 mb-1">TIMESTAMP (ISO 8601)</span>
+<span class="font-telemetry-data text-telemetry-data text-on-surface">2023-10-27T14:32:45Z</span>
+</div>
+<div class="bg-black/40 p-4 border border-primary/40 rounded flex flex-col justify-center">
+<span class="font-label-caps text-label-caps text-primary/70 mb-1">DISPATCHED FACILITY</span>
+<span class="font-telemetry-data text-telemetry-data text-on-surface">AIMS Trauma Center, BLK 4</span>
+</div>
+</div>
+<!-- Hash Box -->
+<div class="mb-8 bg-surface-container-highest border border-outline-variant p-4 rounded text-center relative overflow-hidden">
+<div class="absolute inset-0 bg-primary/5 opacity-50"></div>
+<span class="font-label-caps text-label-caps text-on-surface-variant block mb-2 relative z-10">CRYPTOGRAPHIC HASH (SHA-256)</span>
+<p class="font-telemetry-data text-telemetry-data text-[#10b981] break-all relative z-10 tracking-widest">
+                            593465f5fbfac42984ab22116b6ad6ba21f854e93bdde70e03eec6cc0d7609b5
+                        </p>
+</div>
+<!-- Immunity Clauses -->
+<div class="mb-12 space-y-4">
+<h3 class="font-headline-sm text-headline-sm text-primary mb-4 border-l-2 border-primary pl-3">STATUTORY IMMUNITIES GRANTED</h3>
+<div class="flex items-start gap-3 bg-surface-container/50 p-4 rounded border border-surface-variant">
+<span class="material-symbols-outlined text-primary mt-1" style="font-variation-settings: 'FILL' 1;">shield</span>
+<div>
+<h4 class="font-telemetry-data text-telemetry-data text-on-surface mb-1">EXEMPTION FROM LIABILITY</h4>
+<p class="text-sm text-on-surface-variant leading-relaxed">
+                                    The bearer is protected from civil and criminal liability for any injury to or death of the victim of an accident involving a motor vehicle, where such injury or death resulted from the Good Samaritan's negligence in acting or failing to act while rendering emergency medical or non-medical care or assistance.
+                                </p>
+</div>
+</div>
+<div class="flex items-start gap-3 bg-surface-container/50 p-4 rounded border border-surface-variant">
+<span class="material-symbols-outlined text-primary mt-1" style="font-variation-settings: 'FILL' 1;">block</span>
+<div>
+<h4 class="font-telemetry-data text-telemetry-data text-on-surface mb-1">PROTECTION FROM HARASSMENT</h4>
+<p class="text-sm text-on-surface-variant leading-relaxed">
+                                    The bearer shall not be liable for any civil or criminal liability. They shall be treated respectfully and shall not be discriminated against on the grounds of gender, religion, nationality, caste or any other grounds. They shall not be forced to reveal their personal identity/details.
+                                </p>
+</div>
+</div>
+</div>
+<!-- Footer Actions -->
+<div class="flex flex-col md:flex-row items-center justify-between border-t border-tertiary/20 pt-8 gap-8">
+<div class="flex-shrink-0">
+<div class="seal-stamp font-telemetry-data">
+                                VERIFIED EMERGENCY RECORD
+                            </div>
+</div>
+<button class="w-full md:w-auto bg-primary/20 border border-primary text-primary hover:bg-primary hover:text-on-primary transition-all duration-300 tactile-glow rounded px-6 py-4 flex items-center justify-center gap-3 active:scale-95">
+<span class="material-symbols-outlined">download</span>
+<span class="font-telemetry-data text-telemetry-data font-bold tracking-wider">DOWNLOAD OFFICIAL PDF</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

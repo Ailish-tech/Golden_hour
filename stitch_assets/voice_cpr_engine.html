@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Samaritan Shield - AI Medical Triage &amp; CPR</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-fixed": "#001e2c",
+                        "on-secondary": "#68000c",
+                        "error": "#ffb4ab",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#544600",
+                        "on-primary": "#00354a",
+                        "on-secondary-fixed": "#410005",
+                        "on-tertiary": "#3a3000",
+                        "on-primary-fixed-variant": "#004c69",
+                        "secondary": "#ffb3ae",
+                        "inverse-surface": "#e4e1ef",
+                        "primary-fixed": "#c4e7ff",
+                        "background": "#13121c",
+                        "inverse-primary": "#00668a",
+                        "surface-tint": "#7bd0ff",
+                        "surface-bright": "#393843",
+                        "on-tertiary-container": "#514300",
+                        "secondary-container": "#e00328",
+                        "on-background": "#e4e1ef",
+                        "on-surface": "#e4e1ef",
+                        "on-tertiary-fixed": "#221b00",
+                        "surface-container-lowest": "#0d0d17",
+                        "surface-container-high": "#292933",
+                        "surface-dim": "#13121c",
+                        "primary-container": "#38bdf8",
+                        "surface-variant": "#34343e",
+                        "on-secondary-fixed-variant": "#930016",
+                        "surface-container-highest": "#34343e",
+                        "primary-fixed-dim": "#7bd0ff",
+                        "secondary-fixed-dim": "#ffb3ae",
+                        "primary": "#8ed5ff",
+                        "surface": "#13121c",
+                        "tertiary-fixed-dim": "#e9c400",
+                        "on-primary-container": "#004965",
+                        "tertiary-container": "#d0af00",
+                        "on-error": "#690005",
+                        "surface-container": "#1f1f29",
+                        "surface-container-low": "#1b1b24",
+                        "outline-variant": "#3e484f",
+                        "inverse-on-surface": "#302f3a",
+                        "tertiary": "#f0ca00",
+                        "secondary-fixed": "#ffdad7",
+                        "on-surface-variant": "#bdc8d1",
+                        "tertiary-fixed": "#ffe16d",
+                        "on-secondary-container": "#fff1f0",
+                        "error-container": "#93000a",
+                        "outline": "#87929a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin-desktop": "32px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px",
+                        "container-max": "1440px",
+                        "unit": "4px"
+                    },
+                    "fontFamily": {
+                        "telemetry-data": ["JetBrains Mono"],
+                        "display-lg": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "telemetry-data": ["14px", { "lineHeight": "20px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "800" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "700" }],
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.1em", "fontWeight": "700" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: theme('colors.background');
+            color: theme('colors.on-background');
+            background-image: 
+                linear-gradient(rgba(13, 30, 56, 0.7), rgba(13, 30, 56, 0.7)),
+                linear-gradient(theme('colors.primary/0.05') 1px, transparent 1px),
+                linear-gradient(90deg, theme('colors.primary/0.05') 1px, transparent 1px);
+            background-size: 100% 100%, 32px 32px, 32px 32px;
+            background-position: center, center, center;
+        }
+
+        .glass-panel {
+            background: rgba(13, 30, 56, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(142, 213, 255, 0.4);
+            box-shadow: inset 0 0 20px rgba(142, 213, 255, 0.05);
+        }
+
+        .glass-panel-alert {
+            background: rgba(30, 10, 10, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 180, 171, 0.4);
+            box-shadow: inset 0 0 30px rgba(224, 3, 40, 0.1);
+        }
+
+        .tactile-button {
+            box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.2);
+            border: 1px solid rgba(142, 213, 255, 0.6);
+            transition: all 0.2s ease;
+        }
+        
+        .tactile-button:active {
+            background-color: theme('colors.primary');
+            color: theme('colors.on-primary');
+            transform: scale(0.98);
+        }
+
+        .tactile-button-alert {
+            box-shadow: inset 0 0 10px rgba(224, 3, 40, 0.3);
+            border: 1px solid rgba(255, 180, 171, 0.6);
+            transition: all 0.2s ease;
+        }
+        
+        .tactile-button-alert:active {
+            background-color: theme('colors.secondary-container');
+            color: theme('colors.on-secondary');
+            transform: scale(0.98);
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.6; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+
+        .beacon-active {
+            position: relative;
+        }
+        .beacon-active::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 1px solid #10b981;
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        .beacon-critical {
+            position: relative;
+        }
+        .beacon-critical::before {
+            content: '';
+            position: absolute;
+            inset: -8px;
+            border-radius: 50%;
+            border: 2px solid theme('colors.secondary-container');
+            animation: pulse-ring 1s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        @keyframes heartbeat {
+            0% { transform: scale(1); }
+            15% { transform: scale(1.15); }
+            30% { transform: scale(1); }
+            45% { transform: scale(1.15); }
+            60% { transform: scale(1); }
+            100% { transform: scale(1); }
+        }
+
+        .heart-beat-anim {
+            animation: heartbeat 0.54s infinite; /* ~110 BPM */
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); opacity: 0; }
+            10% { opacity: 0.5; }
+            90% { opacity: 0.5; }
+            100% { transform: translateY(500%); opacity: 0; }
+        }
+        .scanner-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, theme('colors.primary'), transparent);
+            animation: scanline 5s linear infinite;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        .audio-bar {
+            width: 4px;
+            background-color: theme('colors.primary');
+            border-radius: 2px;
+            animation: waveform var(--duration) ease-in-out infinite alternate;
+        }
+        
+        @keyframes waveform {
+            0% { height: 10%; }
+            100% { height: 100%; }
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary selection:text-on-primary">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-surface/70 dark:bg-surface/70 backdrop-blur-xl border-b border-primary/40 shadow-[0_0_15px_rgba(142,213,255,0.1)] flex items-center justify-between px-margin-mobile md:px-margin-desktop h-16 w-full">
+<button class="text-primary dark:text-primary hover:bg-primary/10 transition-colors active:scale-95 duration-100 p-2 rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">security</span>
+</button>
+<h1 class="font-headline-sm text-headline-sm font-black text-primary dark:text-primary tracking-widest uppercase">SAMARITAN_SHIELD</h1>
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-primary/10 transition-colors active:scale-95 duration-100 p-2 rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sensors</span>
+</button>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 pt-20 pb-24 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full flex flex-col gap-gutter">
+<!-- Top Section: Voice AI & Triage Guidance -->
+<section class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+<!-- Voice AI Visualizer -->
+<div class="md:col-span-12 glass-panel rounded-xl p-6 relative overflow-hidden flex flex-col items-center justify-center min-h-[160px]">
+<div class="scanner-line"></div>
+<div class="flex items-center gap-3 mb-4">
+<div class="w-3 h-3 rounded-full bg-[#10b981] beacon-active"></div>
+<span class="font-telemetry-data text-telemetry-data text-primary uppercase tracking-widest">LISTENING FOR: YES / NO / READY / START</span>
+</div>
+<!-- Audio Waveform Simulation -->
+<div class="flex items-end justify-center gap-1 h-12 w-full max-w-xs">
+<div class="audio-bar" style="--duration: 0.4s; height: 30%;"></div>
+<div class="audio-bar" style="--duration: 0.6s; height: 60%;"></div>
+<div class="audio-bar" style="--duration: 0.3s; height: 90%;"></div>
+<div class="audio-bar" style="--duration: 0.7s; height: 40%;"></div>
+<div class="audio-bar" style="--duration: 0.5s; height: 80%;"></div>
+<div class="audio-bar" style="--duration: 0.4s; height: 20%;"></div>
+<div class="audio-bar" style="--duration: 0.8s; height: 70%;"></div>
+<div class="audio-bar" style="--duration: 0.3s; height: 50%;"></div>
+<div class="audio-bar" style="--duration: 0.6s; height: 100%;"></div>
+<div class="audio-bar" style="--duration: 0.5s; height: 40%;"></div>
+<div class="audio-bar" style="--duration: 0.7s; height: 80%;"></div>
+<div class="audio-bar" style="--duration: 0.4s; height: 30%;"></div>
+</div>
+</div>
+<!-- Triage Guidance Banner -->
+<div class="md:col-span-12 glass-panel-alert rounded-xl p-6 relative overflow-hidden flex flex-col items-center text-center border-l-4 border-l-secondary-container">
+<span class="material-symbols-outlined text-error text-4xl mb-2" style="font-variation-settings: 'FILL' 1;">warning</span>
+<h2 class="font-headline-lg text-headline-lg text-on-error-container mb-2">Is the victim breathing normally?</h2>
+<p class="font-headline-sm text-headline-sm text-error/80 uppercase">Say YES or NO</p>
+<!-- Countdown Overlay (Simulated) -->
+<div class="absolute top-4 right-4 bg-black/40 px-3 py-1 rounded border border-secondary-container/50 font-telemetry-data text-telemetry-data text-error">
+                    T-00:05
+                </div>
+</div>
+<!-- Tactile Action Buttons -->
+<div class="md:col-span-6">
+<button class="w-full h-24 rounded-xl tactile-button bg-surface/50 hover:bg-surface/80 flex flex-col items-center justify-center gap-2 group">
+<span class="material-symbols-outlined text-primary text-3xl group-active:text-on-primary">check_circle</span>
+<span class="font-headline-sm text-headline-sm text-primary uppercase group-active:text-on-primary">✓ YES / READY</span>
+</button>
+</div>
+<div class="md:col-span-6">
+<button class="w-full h-24 rounded-xl tactile-button-alert bg-surface/50 hover:bg-surface/80 flex flex-col items-center justify-center gap-2 group">
+<span class="material-symbols-outlined text-error text-3xl group-active:text-on-secondary">cancel</span>
+<span class="font-headline-sm text-headline-sm text-error uppercase group-active:text-on-secondary">✕ NO / BACK</span>
+</button>
+</div>
+</section>
+<!-- CPR Engine Section -->
+<section class="mt-4 grid grid-cols-1 md:grid-cols-12 gap-gutter">
+<!-- Metronome & CPR Visualizer -->
+<div class="md:col-span-8 glass-panel rounded-xl p-6 flex flex-col items-center justify-center min-h-[300px] relative">
+<div class="absolute top-4 left-4 bg-black/40 px-3 py-1 rounded border border-primary/50 font-telemetry-data text-telemetry-data text-primary">
+                    BPM: 110
+                </div>
+<div class="absolute top-4 right-4 bg-black/40 px-3 py-1 rounded border border-primary/50 font-telemetry-data text-telemetry-data text-primary">
+                    MODE: ADULT
+                </div>
+<!-- Pulsing Heart Metronome -->
+<div class="relative w-32 h-32 flex items-center justify-center mb-8">
+<div class="absolute inset-0 rounded-full bg-secondary-container/20 beacon-critical"></div>
+<span class="material-symbols-outlined text-8xl text-secondary-container heart-beat-anim drop-shadow-[0_0_15px_rgba(224,3,40,0.8)]" style="font-variation-settings: 'FILL' 1;">favorite</span>
+</div>
+<!-- Counter Display -->
+<div class="text-center">
+<h3 class="font-display-lg text-display-lg text-white mb-2 tracking-tighter">14 <span class="text-on-surface-variant text-3xl">/ 30</span></h3>
+<p class="font-label-caps text-label-caps text-primary tracking-widest">PUSHES (SET 1)</p>
+</div>
+<!-- Action Alert Overlay (hidden by default, simulated active here for demo) -->
+<div class="absolute bottom-0 inset-x-0 bg-secondary-container/90 backdrop-blur-md p-4 flex items-center justify-center gap-3 border-t border-error">
+<span class="material-symbols-outlined text-on-secondary text-2xl" style="font-variation-settings: 'FILL' 1;">pulmonology</span>
+<span class="font-headline-sm text-headline-sm text-on-secondary uppercase font-bold tracking-wide">GIVE 2 RESCUE BREATHS</span>
+</div>
+</div>
+<!-- Controls & Instructions -->
+<div class="md:col-span-4 flex flex-col gap-gutter">
+<div class="glass-panel rounded-xl p-6 flex-1 flex flex-col justify-center text-center">
+<span class="material-symbols-outlined text-primary text-4xl mb-4">front_hand</span>
+<h4 class="font-headline-sm text-headline-sm text-white uppercase mb-2">POSITION HANDS</h4>
+<p class="text-on-surface-variant font-telemetry-data text-telemetry-data">Center of chest, lower half of breastbone. Push hard, push fast.</p>
+</div>
+<div class="grid grid-cols-2 gap-gutter h-24">
+<button class="tactile-button rounded-xl bg-surface/50 hover:bg-surface/80 flex flex-col items-center justify-center gap-1 group">
+<span class="material-symbols-outlined text-primary group-active:text-on-primary">pause</span>
+<span class="font-label-caps text-label-caps text-primary group-active:text-on-primary">PAUSE</span>
+</button>
+<button class="tactile-button rounded-xl bg-surface/50 hover:bg-surface/80 flex flex-col items-center justify-center gap-1 group">
+<span class="material-symbols-outlined text-primary group-active:text-on-primary">restart_alt</span>
+<span class="font-label-caps text-label-caps text-primary group-active:text-on-primary">RESET</span>
+</button>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar (Suppressed as per rules for Task-Focused/Linear Screen) -->
+<!-- NavigationDrawer (Suppressed as per rules for Task-Focused/Linear Screen) -->
+<!-- The user is in a critical life-saving flow, global nav is hidden to prioritize the canvas. -->
+</body></html>
