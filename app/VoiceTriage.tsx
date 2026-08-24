@@ -24,6 +24,7 @@ import {
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 
+import { authedFetch } from './api';
 import {
   TriageTree,
   INITIAL_NODE_ID,
@@ -45,12 +46,6 @@ interface VoiceTriageProps {
 const CPR_BPM = 110;
 const CPR_INTERVAL_MS = Math.round((60 / CPR_BPM) * 1000); // ~545ms
 const VOICE_LOCALE = 'en-US';
-
-const API_BASE: string = Platform.select({
-  android: 'http://192.168.1.9:3000',
-  ios: 'http://192.168.1.9:3000',
-  default: 'http://localhost:3000',
-}) as string;
 
 // Web Speech Recognition Type Definition
 interface IWebSpeechRecognition {
@@ -105,9 +100,8 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
     (victimCondition: string, compressions?: number, sets?: number) => {
       // Guard against syncing telemetry to the placeholder mock ID
       if (!incidentId || incidentId === 'INC-8492' || incidentId === 'CAD-8492-TX') return;
-      fetch(`${API_BASE}/api/incidents/${incidentId}/triage`, {
+      authedFetch(`/api/incidents/${incidentId}/triage`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           victimCondition,
           ...(typeof compressions === 'number' && { cprCompressions: compressions }),

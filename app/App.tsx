@@ -29,6 +29,7 @@ import VoiceTriage from './VoiceTriage';
 import AuthScreen from './AuthScreen';
 import HospitalPortal, { type EmergencyIncidentItem } from './HospitalPortal';
 import { logoutUser, type AppUserProfile } from './firebaseConfig';
+import { authedFetch } from './api';
 
 type Sound = Audio.Sound;
 
@@ -82,14 +83,7 @@ interface SOSApiResponse {
 // ---------------------------------------------------------------------------
 // Config & Constants
 // ---------------------------------------------------------------------------
-const API_BASE: string = Platform.select({
-  android: 'http://192.168.1.9:3000',
-  ios: 'http://192.168.1.9:3000',
-  default: 'http://localhost:3000',
-}) as string;
-
 const MOCK_COORDS: Coordinates = { lat: 26.9090, lng: 75.7325 };
-const USER_ID: string = 'SHIELD-USER-001';
 
 const TRAUMA_PROTOCOL_STEPS: TraumaProtocolStep[] = [
   {
@@ -240,22 +234,16 @@ export default function App(): React.JSX.Element {
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/hospital/incidents?lat=${coordinates.lat}&lng=${coordinates.lng}`);
+        const res = await authedFetch(`/api/incidents/${incidentId}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.status === 'success' && Array.isArray(data.incidents)) {
-            const currentInc = data.incidents.find(
-              (i: any) => i.id === incidentId || i.incidentCode === incidentId || i.incidentCode === `CAD-${incidentId.slice(-4).toUpperCase()}`
-            );
-            if (currentInc) {
-              if (currentInc.ambulanceUnitAssigned) {
-                setPrimaryHospital((prev) => ({
-                  ...prev,
-                  ambulanceUnit: currentInc.ambulanceUnitAssigned,
-                  transmissionStatus: 'AMBULANCE_DISPATCHED',
-                }));
-              }
-            }
+          const inc = data.incident;
+          if (data.status === 'success' && inc?.ambulanceUnitAssigned) {
+            setPrimaryHospital((prev) => ({
+              ...prev,
+              ambulanceUnit: inc.ambulanceUnitAssigned,
+              transmissionStatus: 'AMBULANCE_DISPATCHED',
+            }));
           }
         }
       } catch (_e) {}
@@ -487,14 +475,9 @@ export default function App(): React.JSX.Element {
     // If PDF is not yet compiled in memory, fetch live certificate on-demand from server
     if (!currentPdf) {
       try {
-        const res = await fetch(`${API_BASE}/api/sos`, {
+        const res = await authedFetch('/api/sos', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lat: coordinates.lat,
-            lng: coordinates.lng,
-            userId: currentUser ? currentUser.email : USER_ID,
-          }),
+          body: JSON.stringify({ lat: coordinates.lat, lng: coordinates.lng }),
         });
         const data: SOSApiResponse = await res.json();
         if (data.status === 'success' && data.pdfBase64) {
@@ -547,14 +530,9 @@ export default function App(): React.JSX.Element {
     setShowCertModal(true);
     if (!pdfBase64) {
       try {
-        const res = await fetch(`${API_BASE}/api/sos`, {
+        const res = await authedFetch('/api/sos', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lat: coordinates.lat,
-            lng: coordinates.lng,
-            userId: currentUser ? currentUser.email : USER_ID,
-          }),
+          body: JSON.stringify({ lat: coordinates.lat, lng: coordinates.lng }),
         });
         const data: SOSApiResponse = await res.json();
         if (data.status === 'success' && data.pdfBase64) {
@@ -592,20 +570,16 @@ export default function App(): React.JSX.Element {
     setAppPhase('active');
     await advanceStatus(1, 300);
 
-    const safeUserId = currentUser ? currentUser.email : USER_ID;
-
     // 4. Send parallel SOS and Dispatch requests to server
     try {
       const [dispatchRes, sosRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/dispatch`, {
+        authedFetch('/api/dispatch', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat: coords.lat, lng: coords.lng, userId: safeUserId }),
+          body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
         }),
-        fetch(`${API_BASE}/api/sos`, {
+        authedFetch('/api/sos', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat: coords.lat, lng: coords.lng, userId: safeUserId }),
+          body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
         }),
       ]);
 
@@ -1168,7 +1142,7 @@ export default function App(): React.JSX.Element {
             {/* 4 Dark Tactical Data Boxes */}
             <View style={styles.certDataBox}>
               <Text style={styles.certDataLabel}>RESPONDER ID</Text>
-              <Text style={styles.certDataValue}>{currentUser ? currentUser.email : USER_ID}</Text>
+              <Text style={styles.certDataValue}>{currentUser?.email || '—'}</Text>
             </View>
 
             <View style={styles.certDataBox}>

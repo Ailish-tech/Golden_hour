@@ -18,6 +18,7 @@ import {
   TextStyle,
 } from 'react-native';
 import { type AppUserProfile } from './firebaseConfig';
+import { authedFetch } from './api';
 
 export interface EmergencyIncidentItem {
   id: string;
@@ -45,12 +46,6 @@ interface HospitalPortalProps {
   onInspectCertificate: (incident: EmergencyIncidentItem) => void;
 }
 
-const API_BASE: string = Platform.select({
-  android: 'http://192.168.1.9:3000',
-  ios: 'http://192.168.1.9:3000',
-  default: 'http://localhost:3000',
-}) as string;
-
 export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   userProfile,
   onLogout,
@@ -69,10 +64,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       // Use user's actual coordinates (resolved from GPS during auth)
       const hospitalLat = userProfile.lat || 26.8924;
       const hospitalLng = userProfile.lng || 75.8150;
-      const res = await fetch(
-        `${API_BASE}/api/hospital/incidents?lat=${hospitalLat}&lng=${hospitalLng}&hospitalId=${
-          userProfile.hospitalId || 'HOSP-01'
-        }`
+      const res = await authedFetch(
+        `/api/hospital/incidents?lat=${hospitalLat}&lng=${hospitalLng}`
       );
       if (res.ok) {
         const data = await res.json();
@@ -107,9 +100,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
     // Sync to backend MongoDB
     try {
-      await fetch(`${API_BASE}/api/incidents/${incidentId}/status`, {
+      await authedFetch(`/api/incidents/${incidentId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'AMBULANCE_DISPATCHED',
           ambulanceUnitAssigned: assignedUnit,
@@ -135,9 +127,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     );
 
     try {
-      await fetch(`${API_BASE}/api/incidents/${incidentId}/status`, {
+      await authedFetch(`/api/incidents/${incidentId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'ICU_RESERVED',
           icuBedReserved: true,

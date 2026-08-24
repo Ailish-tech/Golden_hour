@@ -1,7 +1,9 @@
 // ============================================================================
 // SAMARITAN SHIELD — Authentication Portal (AuthScreen.tsx)
-// Role-based Access: Citizen / Good Samaritan & Hospital CAD Dispatcher
-// GPS Capture + Firebase Auth + MongoDB Backend Sync
+//
+// The portal tab below is a statement of intent, not a grant. Hospital access
+// exposes live victim coordinates, so it is provisioned by an administrator
+// against the staff allowlist; the backend returns the role it actually holds.
 // ============================================================================
 
 import React, { useState, useEffect } from 'react';
@@ -21,7 +23,6 @@ import {
   loginWithEmail,
   registerWithEmail,
   loginWithGoogle,
-  syncUserToBackend,
   type UserRole,
   type AppUserProfile,
 } from './firebaseConfig';
@@ -30,19 +31,11 @@ interface AuthScreenProps {
   onLoginSuccess: (profile: AppUserProfile) => void;
 }
 
-const AVAILABLE_HOSPITALS = [
-  { id: 'HOSP-01', name: 'Sawai Man Singh (SMS) Govt Trauma Hospital', city: 'Jaipur' },
-  { id: 'HOSP-02', name: 'Apex Super Speciality Hospital & ICU', city: 'Jaipur' },
-  { id: 'HOSP-03', name: 'Fortis Escorts Trauma Department', city: 'Jaipur' },
-  { id: 'HOSP-04', name: 'AIIMS Apex Trauma Center', city: 'New Delhi' },
-];
-
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('citizen');
   const [isSignUp, setIsSignUp] = useState<boolean>(false);
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
-  const [selectedHospital, setSelectedHospital] = useState(AVAILABLE_HOSPITALS[0]);
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -76,8 +69,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Auth + Backend Sync Flow
+  // Auth Flow — the backend resolves role; the tab above only sets expectation
   // ---------------------------------------------------------------------------
+  const applyProfile = (profile: AppUserProfile) => {
+    if (selectedRole === 'hospital' && profile.role !== 'hospital') {
+      setErrorMsg(
+        'This account does not have hospital CAD access. An administrator must ' +
+          'grant it before you can view the live incident feed. Signing you in as a citizen responder.'
+      );
+    }
+    onLoginSuccess(profile);
+  };
+
+  const runAuth = async (action: () => Promise<AppUserProfile>) => {
+    setErrorMsg('');
+    setLoading(true);
+    try {
+      applyProfile(await action());
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!email || !password) {
       setErrorMsg('Please enter both email and password.');
@@ -87,98 +102,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       setErrorMsg('Password must be at least 6 characters.');
       return;
     }
-    setErrorMsg('');
-    setLoading(true);
-
-    try {
-      let profile: AppUserProfile;
-      if (isSignUp) {
-        profile = await registerWithEmail(
-          email,
-          password,
-          selectedRole,
-          selectedRole === 'hospital' ? selectedHospital.id : undefined,
-          selectedRole === 'hospital' ? selectedHospital.name : undefined
-        );
-      } else {
-        profile = await loginWithEmail(
-          email,
-          password,
-          selectedRole,
-          selectedRole === 'hospital' ? selectedHospital.id : undefined,
-          selectedRole === 'hospital' ? selectedHospital.name : undefined
-        );
-      }
-
-      // Sync user to MongoDB backend (upsert) — resolves nearest hospital for hospital users
-      const syncedProfile = await syncUserToBackend(profile, userCoords || undefined);
-      onLoginSuccess(syncedProfile);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Authentication failed';
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
-    }
+    const coords = userCoords || undefined;
+    await runAuth(() =>
+      isSignUp ? registerWithEmail(email, password, coords) : loginWithEmail(email, password, coords)
+    );
   };
 
   const handleGoogleLogin = async () => {
     if (Platform.OS !== 'web') {
-      setErrorMsg('Google Sign-In is only supported on Web in this demo.');
+      setErrorMsg('Google Sign-In is only supported on web in this configuration.');
       return;
     }
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      const profile = await loginWithGoogle(
-        selectedRole,
-        selectedRole === 'hospital' ? selectedHospital.id : undefined,
-        selectedRole === 'hospital' ? selectedHospital.name : undefined
-      );
-      const syncedProfile = await syncUserToBackend(profile, userCoords || undefined);
-      onLoginSuccess(syncedProfile);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Google Sign-In failed';
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Quick 1-Click Demo Logins for Instant Testing
-  const handleQuickCitizenLogin = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      const profile = await loginWithEmail('citizen.responder@samaritan.org', 'demo123456', 'citizen');
-      const syncedProfile = await syncUserToBackend(profile, userCoords || undefined);
-      onLoginSuccess(syncedProfile);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Demo login failed';
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickHospitalLogin = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      const profile = await loginWithEmail(
-        'sms.trauma.cad@rajasthan.gov.in',
-        'hospital123',
-        'hospital',
-        selectedHospital.id,
-        selectedHospital.name
-      );
-      const syncedProfile = await syncUserToBackend(profile, userCoords || undefined);
-      onLoginSuccess(syncedProfile);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Demo login failed';
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
-    }
+    await runAuth(() => loginWithGoogle(userCoords || undefined));
   };
 
   return (
@@ -253,36 +188,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         </View>
       </View>
 
-      {/* Hospital Selector (When Hospital Role is Selected) */}
+      {/* Hospital access is provisioned, not selected */}
       {selectedRole === 'hospital' && (
         <View style={styles.hospitalPickerCard}>
-          <Text style={styles.fieldLabel}>ASSIGNED TRAUMA HOSPITAL DESK</Text>
+          <Text style={styles.fieldLabel}>HOSPITAL CAD ACCESS</Text>
           <Text style={styles.hospitalAutoNote}>
-            💡 Your nearest hospital will be auto-detected from GPS. Select manually to override:
+            🔒 Access to the live incident feed is granted by an administrator against your
+            hospital's staff allowlist, and your desk is bound to that hospital. Sign in with
+            the account that was allowlisted — there is nothing to select here.
           </Text>
-          <View style={styles.hospitalList}>
-            {AVAILABLE_HOSPITALS.map((h) => {
-              const isSelected = selectedHospital.id === h.id;
-              return (
-                <TouchableOpacity
-                  key={h.id}
-                  style={[styles.hospitalItem, isSelected && styles.hospitalItemActive]}
-                  onPress={() => setSelectedHospital(h)}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.hospitalName, isSelected && styles.hospitalNameActive]}>
-                      {h.name}
-                    </Text>
-                    <Text style={styles.hospitalCity}>{h.city} • Emergency Trauma Unit</Text>
-                  </View>
-                  <Text style={[styles.radioIcon, isSelected && styles.radioIconActive]}>
-                    {isSelected ? '◉' : '○'}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
         </View>
       )}
 
@@ -378,29 +292,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         </TouchableOpacity>
       </View>
 
-      {/* Quick 1-Click Evaluation Logins */}
-      <View style={styles.demoCard}>
-        <Text style={styles.demoCardTitle}>⚡ 1-CLICK QUICK ACCESS FOR EVALUATORS</Text>
-        <View style={styles.demoButtonsRow}>
-          <TouchableOpacity
-            style={styles.demoCitizenBtn}
-            onPress={handleQuickCitizenLogin}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.demoBtnText}>🛡️ Quick Login: CITIZEN</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.demoHospitalBtn}
-            onPress={handleQuickHospitalLogin}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.demoBtnText}>🏥 Quick Login: HOSPITAL CAD</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
     </ScrollView>
   );
 };

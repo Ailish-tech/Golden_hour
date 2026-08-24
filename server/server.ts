@@ -12,6 +12,8 @@ import mongoose from 'mongoose';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import Incident, { type IIncident } from './models/Incident';
 import User from './models/User';
+import HospitalStaff from './models/HospitalStaff';
+import { initAuth, requireAuth, requireHospital, getAuthMode } from './middleware/auth';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,7 +21,6 @@ import User from './models/User';
 interface SOSRequestBody {
   lat?: number;
   lng?: number;
-  userId?: string;
 }
 
 interface SOSSuccessResponse {
@@ -45,7 +46,6 @@ interface LegalShieldParams {
 }
 
 interface DispatchRequestBody {
-  userId?: string;
   lat?: number;
   lng?: number;
 }
@@ -293,66 +293,73 @@ const DEDUP_RADIUS_METERS: number = 150;
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
-app.use(cors());
+const CORS_ORIGINS: string[] = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: CORS_ORIGINS.length > 0 ? CORS_ORIGINS : false,
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
 // Health-check
 // ---------------------------------------------------------------------------
 app.get('/api/health', (_req: Request, res: Response): void => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  res.json({ status: 'ok', uptime: process.uptime(), authMode: getAuthMode() });
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/sync — Upsert user to MongoDB after every login/register
 // ---------------------------------------------------------------------------
-app.post('/api/auth/sync', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/auth/sync', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { firebaseUid, email, displayName, role, hospitalId, hospitalName, lat, lng } = req.body as {
-      firebaseUid?: string;
-      email?: string;
+    // Identity comes from the verified token only. A client may propose a
+    // display name and its coordinates; it may not propose who it is, nor
+    // what role it holds.
+    const firebaseUid = req.user!.uid;
+    const email = req.user!.email;
+    const { displayName, lat, lng } = req.body as {
       displayName?: string;
-      role?: string;
-      hospitalId?: string;
-      hospitalName?: string;
       lat?: number;
       lng?: number;
     };
 
-    if (!firebaseUid || !email) {
-      res.status(400).json({ status: 'error', message: 'Missing firebaseUid or email' });
+    if (!email) {
+      res.status(400).json({ status: 'error', message: 'Token carries no email address.' });
       return;
     }
 
-    const safeRole = role === 'hospital' ? 'hospital' : 'citizen';
+    // Role is resolved server-side: an existing role is preserved, otherwise
+    // the hospital-staff allowlist decides. Everyone else is a citizen.
+    const existing = await User.findOne({ firebaseUid }).lean();
 
-    // For hospital users with coordinates, resolve nearest hospital
-    let resolvedHospitalId = hospitalId;
-    let resolvedHospitalName = hospitalName;
+    let role: 'citizen' | 'hospital' = existing?.role === 'hospital' ? 'hospital' : 'citizen';
+    let hospitalId = existing?.hospitalId;
+    let hospitalName = existing?.hospitalName;
 
-    if (safeRole === 'hospital' && typeof lat === 'number' && typeof lng === 'number') {
-      try {
-        const { primaryHospital } = await getNearestHospitals(lat, lng);
-        if (primaryHospital) {
-          resolvedHospitalId = primaryHospital.id;
-          resolvedHospitalName = primaryHospital.name;
-          console.log(`🏥 [Auth Sync] Hospital user ${email} → Nearest: ${primaryHospital.name} (${primaryHospital.distanceText})`);
-        }
-      } catch (_e) {
-        console.warn('[Auth Sync] Hospital resolution failed, using provided values');
+    if (role !== 'hospital') {
+      const staff = await HospitalStaff.findOne({ email: email.toLowerCase() }).lean();
+      if (staff) {
+        role = 'hospital';
+        hospitalId = staff.hospitalId;
+        hospitalName = staff.hospitalName;
       }
     }
 
-    // Upsert: create if not exists, update if exists
     const user = await User.findOneAndUpdate(
       { firebaseUid },
       {
         $set: {
           email,
-          displayName: displayName || 'Samaritan User',
-          role: safeRole,
-          hospitalId: safeRole === 'hospital' ? resolvedHospitalId : undefined,
-          hospitalName: safeRole === 'hospital' ? resolvedHospitalName : undefined,
+          displayName: displayName || existing?.displayName || 'Samaritan User',
+          role,
+          hospitalId: role === 'hospital' ? hospitalId : undefined,
+          hospitalName: role === 'hospital' ? hospitalName : undefined,
           lastKnownLat: lat,
           lastKnownLng: lng,
           lastLoginAt: new Date(),
@@ -361,7 +368,7 @@ app.post('/api/auth/sync', async (req: Request, res: Response): Promise<void> =>
       { upsert: true, new: true, runValidators: true }
     );
 
-    console.log(`✅ [Auth Sync] User ${email} (${safeRole}) synced → ${user._id}`);
+    console.log(`\u2705 [Auth Sync] ${email} (${role}) synced \u2192 ${user._id}`);
 
     res.json({
       status: 'success',
@@ -378,7 +385,7 @@ app.post('/api/auth/sync', async (req: Request, res: Response): Promise<void> =>
       },
     });
   } catch (err: unknown) {
-    console.error('❌ Auth sync error:', err);
+    console.error('\u274c Auth sync error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to sync user.' });
   }
 });
@@ -386,10 +393,10 @@ app.post('/api/auth/sync', async (req: Request, res: Response): Promise<void> =>
 // ---------------------------------------------------------------------------
 // POST /api/sos — Core Emergency Endpoint
 // ---------------------------------------------------------------------------
-app.post('/api/sos', async (req: Request<{}, SOSSuccessResponse | SOSErrorResponse, SOSRequestBody>, res: Response<SOSSuccessResponse | SOSErrorResponse>): Promise<void> => {
+app.post('/api/sos', requireAuth, async (req: Request<{}, SOSSuccessResponse | SOSErrorResponse, SOSRequestBody>, res: Response<SOSSuccessResponse | SOSErrorResponse>): Promise<void> => {
   try {
-    // 1. Extract payload — ZERO CLIENT TRUST on timestamps
-    const { lat, lng, userId } = req.body;
+    // 1. Extract payload — ZERO CLIENT TRUST on identity or timestamps
+    const { lat, lng } = req.body;
 
     if (lat == null || lng == null) {
       res.status(400).json({
@@ -399,7 +406,7 @@ app.post('/api/sos', async (req: Request<{}, SOSSuccessResponse | SOSErrorRespon
       return;
     }
 
-    const safeUserId: string = userId || `ANON-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const safeUserId: string = req.user!.uid;
 
     // 2. Server-authoritative UTC timestamp
     const timestamp: string = new Date().toISOString();
@@ -750,19 +757,11 @@ async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash }: Leg
 // ---------------------------------------------------------------------------
 // POST /api/dispatch — Spatial Deduplication & CAD Routing
 // ---------------------------------------------------------------------------
-app.post('/api/dispatch', async (req: Request<{}, DispatchResponse, DispatchRequestBody>, res: Response<DispatchResponse>): Promise<void> => {
+app.post('/api/dispatch', requireAuth, async (req: Request<{}, DispatchResponse, DispatchRequestBody>, res: Response<DispatchResponse>): Promise<void> => {
   try {
-    const { userId, lat, lng } = req.body;
+    const { lat, lng } = req.body;
 
     // --- Input validation ---
-    if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
-      res.status(400).json({
-        status: 'error',
-        message: 'Missing or invalid required field: userId',
-      });
-      return;
-    }
-
     if (lat == null || lng == null || typeof lat !== 'number' || typeof lng !== 'number') {
       res.status(400).json({
         status: 'error',
@@ -779,7 +778,7 @@ app.post('/api/dispatch', async (req: Request<{}, DispatchResponse, DispatchRequ
       return;
     }
 
-    const safeUserId: string = userId.trim();
+    const safeUserId: string = req.user!.uid;
 
     // --- Spatial dedup: find active incident within 150m ---
     const existingIncident: IIncident | null = await Incident.findOne({
@@ -873,7 +872,7 @@ app.post('/api/dispatch', async (req: Request<{}, DispatchResponse, DispatchRequ
 // ---------------------------------------------------------------------------
 // PATCH /api/incidents/:id/triage — Live Voice Triage & CPR Pacing Telemetry Sync
 // ---------------------------------------------------------------------------
-app.patch('/api/incidents/:id/triage', async (req: Request, res: Response): Promise<void> => {
+app.patch('/api/incidents/:id/triage', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { victimCondition, cprCompressions, cprSets } = req.body as {
@@ -881,6 +880,23 @@ app.patch('/api/incidents/:id/triage', async (req: Request, res: Response): Prom
       cprCompressions?: number;
       cprSets?: number;
     };
+
+    // Only a reporter on this incident may push triage telemetry for it.
+    const incident = await Incident.findById(id).lean();
+    if (!incident) {
+      res.status(404).json({ status: 'error', message: 'Incident not found.' });
+      return;
+    }
+
+    const callerUid = req.user!.uid;
+    const isReporter =
+      incident.primaryReporterId === callerUid ||
+      (incident.secondaryReporters || []).includes(callerUid);
+
+    if (!isReporter) {
+      res.status(403).json({ status: 'error', message: 'Not a reporter on this incident.' });
+      return;
+    }
 
     const updateFields: Record<string, unknown> = {};
     if (victimCondition) updateFields.victimCondition = victimCondition;
@@ -905,9 +921,53 @@ app.patch('/api/incidents/:id/triage', async (req: Request, res: Response): Prom
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/incidents/:id — Single incident, scoped to its reporters
+// Lets a responder follow their own incident without reading everyone else's.
+// ---------------------------------------------------------------------------
+app.get('/api/incidents/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const incident = await Incident.findById(req.params.id).lean();
+    if (!incident) {
+      res.status(404).json({ status: 'error', message: 'Incident not found.' });
+      return;
+    }
+
+    const callerUid = req.user!.uid;
+    const isReporter =
+      incident.primaryReporterId === callerUid ||
+      (incident.secondaryReporters || []).includes(callerUid);
+
+    if (!isReporter) {
+      res.status(403).json({ status: 'error', message: 'Not a reporter on this incident.' });
+      return;
+    }
+
+    res.json({
+      status: 'success',
+      incident: {
+        id: String(incident._id),
+        incidentCode: `CAD-${String(incident._id).slice(-4).toUpperCase()}`,
+        status: incident.status,
+        victimCondition: incident.victimCondition,
+        ambulanceUnitAssigned: incident.ambulanceUnitAssigned,
+        icuBedReserved: incident.icuBedReserved,
+        assignedHospitalId: incident.assignedHospitalId,
+        assignedHospitalName: incident.assignedHospitalName,
+        hash: incident.hash,
+        createdAt: incident.createdAt.toISOString(),
+        updatedAt: incident.updatedAt.toISOString(),
+      },
+    });
+  } catch (err: unknown) {
+    console.error('❌ Incident fetch error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch incident.' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/hospital/incidents — Live emergencies sorted by distance from hospital
 // ---------------------------------------------------------------------------
-app.get('/api/hospital/incidents', async (req: Request, res: Response): Promise<void> => {
+app.get('/api/hospital/incidents', requireHospital, async (req: Request, res: Response): Promise<void> => {
   try {
     const hospitalLat = parseFloat(req.query.lat as string) || 26.8924;
     const hospitalLng = parseFloat(req.query.lng as string) || 75.8150;
@@ -972,7 +1032,7 @@ app.get('/api/hospital/incidents', async (req: Request, res: Response): Promise<
 // ---------------------------------------------------------------------------
 // PATCH /api/incidents/:id/status — Update incident status & ambulance assignment
 // ---------------------------------------------------------------------------
-app.patch('/api/incidents/:id/status', async (req: Request, res: Response): Promise<void> => {
+app.patch('/api/incidents/:id/status', requireHospital, async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { status, ambulanceUnitAssigned, icuBedReserved } = req.body as {
@@ -1020,6 +1080,7 @@ app.patch('/api/incidents/:id/status', async (req: Request, res: Response): Prom
 async function startServer(): Promise<void> {
   try {
     console.log('');
+    initAuth();
     console.log('⏳  Connecting to MongoDB...');
     await mongoose.connect(MONGO_URI);
     console.log(`✅  MongoDB connected: ${mongoose.connection.host}`);
