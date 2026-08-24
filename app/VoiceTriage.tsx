@@ -47,8 +47,8 @@ const CPR_INTERVAL_MS = Math.round((60 / CPR_BPM) * 1000); // ~545ms
 const VOICE_LOCALE = 'en-US';
 
 const API_BASE: string = Platform.select({
-  android: 'http://10.0.2.2:3000',
-  ios: 'http://localhost:3000',
+  android: 'http://192.168.1.9:3000',
+  ios: 'http://192.168.1.9:3000',
   default: 'http://localhost:3000',
 }) as string;
 

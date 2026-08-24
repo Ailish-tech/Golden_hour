@@ -912,8 +912,11 @@ app.get('/api/hospital/incidents', async (req: Request, res: Response): Promise<
     const hospitalLat = parseFloat(req.query.lat as string) || 26.8924;
     const hospitalLng = parseFloat(req.query.lng as string) || 75.8150;
 
-  const rawIncidents = await Incident.find({
+    // Only fetch incidents from the last 2 hours to prevent stale test data
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const rawIncidents = await Incident.find({
       status: { $in: ['REPORTED', 'AMBULANCE_DISPATCHED', 'ICU_RESERVED'] },
+      createdAt: { $gte: twoHoursAgo }
     })
       .sort({ createdAt: -1 })
       .limit(50)

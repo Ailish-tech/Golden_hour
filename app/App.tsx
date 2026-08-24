@@ -84,8 +84,8 @@ interface SOSApiResponse {
 // Config & Constants
 // ---------------------------------------------------------------------------
 const API_BASE: string = Platform.select({
-  android: 'http://10.0.2.2:3000',
-  ios: 'http://localhost:3000',
+  android: 'http://192.168.1.9:3000',
+  ios: 'http://192.168.1.9:3000',
   default: 'http://localhost:3000',
 }) as string;
 
