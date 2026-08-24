@@ -37,18 +37,47 @@ export interface AppUserProfile {
 
 // ---------------------------------------------------------------------------
 // Firebase Configuration
-// The web API key is a public project identifier, not a secret — access is
-// governed by Firebase Auth and security rules. It stays overridable so a
-// pilot can point at its own project.
+//
+// Required from the environment. There is deliberately no built-in default:
+// a fallback project silently authenticates against someone else's Firebase,
+// and because the Admin SDK checks an ID token's audience against its own
+// project, the failure surfaces server-side as "incorrect audience" — which
+// reads like a broken token rather than a misconfigured app.
+//
+// These are public project identifiers, not secrets; access is governed by
+// Firebase Auth and your security rules.
 // ---------------------------------------------------------------------------
-const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyBzbNdP_RVl0QmkbAFz47Bs0n4LojOS8uo',
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || 'goldenhour-e7bdc.firebaseapp.com',
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || 'goldenhour-e7bdc',
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || 'goldenhour-e7bdc.firebasestorage.app',
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_SENDER_ID || '959269205844',
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || '1:959269205844:web:209d837a2739167779bac1',
+const REQUIRED_FIREBASE_ENV = {
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+} as const;
+
+const ENV_VAR_NAMES: Record<keyof typeof REQUIRED_FIREBASE_ENV, string> = {
+  apiKey: 'EXPO_PUBLIC_FIREBASE_API_KEY',
+  authDomain: 'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN',
+  projectId: 'EXPO_PUBLIC_FIREBASE_PROJECT_ID',
+  storageBucket: 'EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET',
+  messagingSenderId: 'EXPO_PUBLIC_FIREBASE_SENDER_ID',
+  appId: 'EXPO_PUBLIC_FIREBASE_APP_ID',
 };
+
+const missing = (Object.keys(REQUIRED_FIREBASE_ENV) as Array<keyof typeof REQUIRED_FIREBASE_ENV>)
+  .filter((k) => !REQUIRED_FIREBASE_ENV[k])
+  .map((k) => ENV_VAR_NAMES[k]);
+
+if (missing.length > 0) {
+  throw new Error(
+    `Firebase is not configured. Missing in app/.env:\n  ${missing.join('\n  ')}\n\n` +
+      'Copy these from the Firebase console: Project settings -> General -> Your apps -> Web app -> SDK setup and configuration.\n' +
+      "The project you choose must be the SAME one your backend's service-account key belongs to."
+  );
+}
+
+const firebaseConfig = REQUIRED_FIREBASE_ENV as Record<keyof typeof REQUIRED_FIREBASE_ENV, string>;
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);

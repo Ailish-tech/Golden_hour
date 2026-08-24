@@ -71,8 +71,18 @@ npm run dev
 > **The service account and the app must belong to the same Firebase project.**
 > The Admin SDK verifies an ID token's audience against its own project, so a
 > key from project A cannot verify tokens minted for project B — every request
-> fails with `Firebase ID token has incorrect audience`. Check that the key's
-> `project_id` matches `EXPO_PUBLIC_FIREBASE_PROJECT_ID` in `app/.env`.
+> fails with `Firebase ID token has incorrect audience`, which reads like a
+> broken token rather than a configuration mismatch. The key's `project_id`
+> must equal `EXPO_PUBLIC_FIREBASE_PROJECT_ID` in `app/.env`.
+>
+> Both sides are required from the environment and neither has a built-in
+> default, so a missing or mismatched project fails loudly at startup rather
+> than silently authenticating against the wrong Firebase.
+
+Enable the sign-in methods the app uses in that same project — Firebase console
+→ Authentication → Sign-in method → **Email/Password**, and **Google** if you
+want the Google button to work. Auth fails with `auth/operation-not-allowed`
+until they are switched on.
 
 > **Never commit the service-account JSON.** It carries a private key granting
 > full admin access to the project, and this repository is public. Keep it
