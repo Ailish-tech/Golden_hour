@@ -221,16 +221,19 @@ export const VoiceTriage: React.FC<VoiceTriageProps> = ({ onDismiss, isActive, i
 
       const nextNodeId = choice === 'yes' ? node.onYes : node.onNo;
 
-      // Sync state to MongoDB based on user answer
-      if (node.id === 'check_response') {
-        if (choice === 'no') syncTelemetry('CRITICAL_UNCONSCIOUS');
-      } else if (node.id === 'check_massive_bleeding') {
-        if (choice === 'yes') syncTelemetry('BLEEDING_TRAUMA');
-      } else if (node.id === 'control_bleeding' || node.id === 'control_bleeding_persist') {
-        if (choice === 'yes') syncTelemetry('BLEEDING_CONTROLLED');
-      } else if (node.id === 'check_breathing') {
-        if (choice === 'no') syncTelemetry('CPR_ACTIVE');
-        if (choice === 'yes') syncTelemetry('RECOVERY_POSITION');
+      let telemetryState: string | undefined = nextNodeId && TriageTree[nextNodeId] ? TriageTree[nextNodeId].label : undefined;
+
+      // Sync strict medical states for specific critical nodes
+      if (node.id === 'check_response' && choice === 'no') telemetryState = 'CRITICAL_UNCONSCIOUS';
+      if (node.id === 'check_massive_bleeding' && choice === 'yes') telemetryState = 'BLEEDING_TRAUMA';
+      if ((node.id === 'control_bleeding' || node.id === 'control_bleeding_persist') && choice === 'yes') telemetryState = 'BLEEDING_CONTROLLED';
+      if (node.id === 'check_breathing') {
+        if (choice === 'no') telemetryState = 'CPR_ACTIVE';
+        if (choice === 'yes') telemetryState = 'RECOVERY_POSITION';
+      }
+
+      if (telemetryState) {
+        syncTelemetry(telemetryState);
       }
 
       if (nextNodeId && TriageTree[nextNodeId]) {

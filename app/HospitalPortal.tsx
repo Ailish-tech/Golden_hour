@@ -201,7 +201,9 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
       default:
         return (
           <View style={styles.victimStatusTagYellow}>
-            <Text style={styles.victimStatusTextYellow}>⚠️ CRITICAL TRIAGE ACTIVE</Text>
+            <Text style={styles.victimStatusTextYellow}>
+              ⚠️ {condition ? condition.toUpperCase() : 'CRITICAL TRIAGE ACTIVE'}
+            </Text>
           </View>
         );
     }
