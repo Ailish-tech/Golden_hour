@@ -702,8 +702,8 @@ export default function App(): React.JSX.Element {
         <View style={styles.legalInnerBanner}>
           <Text style={styles.legalInnerIcon}>📑</Text>
           <View style={{ flex: 1 }}>
-            <Text style={styles.legalInnerTitle}>Good Samaritan Immunity</Text>
-            <Text style={styles.legalInnerSubtitle}>Tap to generate & download official PDF</Text>
+            <Text style={styles.legalInnerTitle}>Good Samaritan Rights</Text>
+            <Text style={styles.legalInnerSubtitle}>Tap to view your rights and incident record</Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -950,9 +950,9 @@ export default function App(): React.JSX.Element {
       >
         <Text style={styles.legalBannerIcon}>📄</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.legalBannerTitle}>VIEW LEGAL CERTIFICATE (PDF)</Text>
+          <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
           <Text style={styles.legalBannerSubtext}>
-            {pdfBase64 ? 'Section 134A Statutory Good Samaritan Protection' : 'Generating encrypted certificate in background...'}
+            {pdfBase64 ? 'Timestamped record + your rights under Section 134A' : 'Generating record...'}
           </Text>
         </View>
         <Text style={styles.legalBannerArrow}>➔</Text>
@@ -1049,16 +1049,16 @@ export default function App(): React.JSX.Element {
   const renderReportsView = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
       <View style={styles.hudFeatureCard}>
-        <Text style={styles.cardHeaderLabel}>⚖️ STATUTORY GOOD SAMARITAN VAULT</Text>
+        <Text style={styles.cardHeaderLabel}>⚖️ YOUR RIGHTS AS A GOOD SAMARITAN</Text>
         <Text style={styles.hudCardSubtext}>
-          Under Section 134A of the Motor Vehicles Act, 2019 and the Supreme Court Guidelines (WP Civil 235/2012), any citizen rendering emergency assistance is granted full legal immunity.
+          Under Section 134A of the Motor Vehicles Act, 2019 and the Supreme Court guidelines (WP Civil 235/2012), a citizen rendering emergency assistance is protected from civil and criminal liability and cannot be compelled to identify themselves. These protections apply by law — no document is required to claim them.
         </Text>
       </View>
 
       <View style={styles.hudFeatureCard}>
-        <Text style={styles.cardHeaderLabel}>🔐 ACTIVE CRYPTOGRAPHIC AUDIT LOG</Text>
+        <Text style={styles.cardHeaderLabel}>🔐 INCIDENT RECORD DIGEST</Text>
         <View style={styles.hashPreviewBox}>
-          <Text style={styles.hashPreviewLabel}>SHA-256 TAMPER-PROOF DIGEST</Text>
+          <Text style={styles.hashPreviewLabel}>SHA-256 RECORD DIGEST</Text>
           <Text style={styles.hashPreviewValue}>
             {hash || 'No record yet — trigger an emergency to generate one'}
           </Text>
@@ -1074,8 +1074,8 @@ export default function App(): React.JSX.Element {
       >
         <Text style={styles.legalBannerIcon}>📄</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.legalBannerTitle}>VIEW OFFICIAL PDF CERTIFICATE</Text>
-          <Text style={styles.legalBannerSubtext}>Tamper-Proof Good Samaritan Record</Text>
+          <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
+          <Text style={styles.legalBannerSubtext}>Timestamped account of assistance rendered</Text>
         </View>
         <Text style={styles.legalBannerArrow}>➔</Text>
       </TouchableOpacity>
@@ -1095,15 +1095,15 @@ export default function App(): React.JSX.Element {
           <ScrollView contentContainerStyle={styles.certScrollContent}>
             {/* Government & Statutory Header */}
             <View style={styles.certHeader}>
-              <Text style={styles.certEmblem}>🏛️</Text>
+              <Text style={styles.certEmblem}>🛡️</Text>
               <Text style={styles.certGovtTitle}>
-                REPUBLIC OF INDIA — STATUTORY EMERGENCY RECORD
+                SAMARITAN SHIELD — INDEPENDENT EMERGENCY RECORD
               </Text>
               <Text style={styles.certMainHeading}>
-                GOOD SAMARITAN LEGAL PROTECTION CERTIFICATE
+                GOOD SAMARITAN INCIDENT RECORD
               </Text>
               <Text style={styles.certStatuteBadge}>
-                [Section 134A Motor Vehicles Act]
+                Not a government document
               </Text>
             </View>
 
@@ -1128,20 +1128,20 @@ export default function App(): React.JSX.Element {
             </View>
 
             <View style={styles.certDataBox}>
-              <Text style={styles.certDataLabel}>DISPATCHED FACILITY</Text>
+              <Text style={styles.certDataLabel}>ROUTED FACILITY</Text>
               <Text style={styles.certDataValue}>{primaryHospital?.name || 'Not resolved'}</Text>
             </View>
 
             {/* Cryptographic Hash Box */}
             <View style={styles.certHashCard}>
-              <Text style={styles.certHashLabel}>CRYPTOGRAPHIC HASH (SHA-256)</Text>
+              <Text style={styles.certHashLabel}>RECORD DIGEST (SHA-256)</Text>
               <Text style={styles.certHashText}>
                 {hash || 'Not yet generated'}
               </Text>
             </View>
 
-            {/* Statutory Immunities Granted */}
-            <Text style={styles.certSectionTitle}>STATUTORY IMMUNITIES GRANTED</Text>
+            {/* Rights under the law */}
+            <Text style={styles.certSectionTitle}>YOUR RIGHTS UNDER THE LAW</Text>
 
             <View style={styles.certImmunityCard}>
               <View style={styles.certImmunityHeaderRow}>
@@ -1149,7 +1149,7 @@ export default function App(): React.JSX.Element {
                 <Text style={styles.certImmunityTitle}>EXEMPTION FROM LIABILITY</Text>
               </View>
               <Text style={styles.certImmunityBody}>
-                The bearer is protected from civil and criminal liability for any injury to or death of the victim of an accident, where such injury or death resulted from the Good Samaritan's action or omission while rendering emergency medical care.
+                Under Section 134A of the Motor Vehicles (Amendment) Act, 2019, a person who renders emergency assistance to an accident victim is not liable for any civil or criminal action for injury to or death of the victim arising from it. This applies by law, with or without this record.
               </Text>
             </View>
 
@@ -1159,14 +1159,23 @@ export default function App(): React.JSX.Element {
                 <Text style={styles.certImmunityTitle}>PROTECTION FROM HARASSMENT</Text>
               </View>
               <Text style={styles.certImmunityBody}>
-                The bearer shall not be liable for any detention or interrogation. They shall be treated respectfully and shall not be discriminated against. They shall not be forced to reveal their personal identity details.
+                Following the Supreme Court of India in Writ Petition (Civil) No. 235 of 2012, you cannot be compelled to disclose your identity or address, detained, or subjected to mandatory questioning.
               </Text>
             </View>
 
             {/* Digital Stamp */}
             <View style={styles.certStampBox}>
-              <Text style={styles.certStampText}>VERIFIED EMERGENCY RECORD</Text>
+              <Text style={styles.certStampText}>
+                {hash
+                  ? 'DIGEST RECORDED — VERIFIABLE'
+                  : 'NO RECORD YET'}
+              </Text>
             </View>
+            <Text style={styles.certDisclaimer}>
+              Generated automatically by Samaritan Shield. Not issued, certified or endorsed by
+              any government body, and not digitally signed. It does not itself confer legal
+              status — it records what happened and when.
+            </Text>
 
             {/* Action Buttons */}
             <TouchableOpacity
@@ -1175,14 +1184,14 @@ export default function App(): React.JSX.Element {
               activeOpacity={0.8}
             >
               <Text style={styles.certDownloadBtnIcon}>📥</Text>
-              <Text style={styles.certDownloadBtnText}>DOWNLOAD OFFICIAL PDF</Text>
+              <Text style={styles.certDownloadBtnText}>DOWNLOAD RECORD (PDF)</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.certCloseBtn}
               onPress={() => setShowCertModal(false)}
             >
-              <Text style={styles.certCloseBtnText}>✕ CLOSE CERTIFICATE</Text>
+              <Text style={styles.certCloseBtnText}>✕ CLOSE</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -1246,7 +1255,7 @@ export default function App(): React.JSX.Element {
             setIncidentId(inc.id);
             setIncidentCode(inc.incidentCode);
             setCoordinates({ lat: inc.lat, lng: inc.lng });
-            setHash(inc.sha256Hash);
+            setHash(inc.sha256Hash ?? null);
             setTimestamp(inc.timestamp);
             setShowCertModal(true);
           }}
@@ -2312,6 +2321,15 @@ const styles = StyleSheet.create({
   } as TextStyle,
   navTabLabelActive: {
     color: '#8ed5ff',
+  } as TextStyle,
+
+  certDisclaimer: {
+    fontSize: 10,
+    color: '#94a3b8',
+    lineHeight: 15,
+    marginTop: 10,
+    marginBottom: 4,
+    textAlign: 'center',
   } as TextStyle,
 
   radarEmptyBox: {

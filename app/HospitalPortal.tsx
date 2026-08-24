@@ -13,7 +13,6 @@ import {
   Platform,
   Alert,
   Linking,
-  ActivityIndicator,
   ViewStyle,
   TextStyle,
 } from 'react-native';
@@ -31,11 +30,12 @@ export interface EmergencyIncidentItem {
   etaMinutes: number;
   timestamp: string;
   victimStatus: string;
-  status: 'PENDING_DISPATCH' | 'AMBULANCE_EN_ROUTE' | 'ICU_RESERVED' | 'PATIENT_ADMITTED';
+  status: 'PENDING_DISPATCH' | 'AMBULANCE_EN_ROUTE' | 'ICU_RESERVED';
   ambulanceUnitAssigned?: string;
   cprCompressions?: number;
   cprSets?: number;
-  sha256Hash: string;
+  sha256Hash?: string;
+  reporterCount?: number;
   phone: string;
   googleMapsUrl: string;
 }
@@ -51,10 +51,8 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   onLogout,
   onInspectCertificate,
 }) => {
-  const [icuBeds, setIcuBeds] = useState<number>(18);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [icuBeds, setIcuBeds] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<EmergencyIncidentItem[]>([]);
-  const [pollingActive, setPollingActive] = useState<boolean>(true);
 
   // -------------------------------------------------------------------------
   // Live End-to-End Telemetry Polling (Every 2.5s)
@@ -83,6 +81,35 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     const timer = setInterval(fetchLiveIncidents, 2500);
     return () => clearInterval(timer);
   }, [fetchLiveIncidents]);
+
+  // Capacity is shared state, not a local counter: what this desk reports is
+  // what responders are routed on.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authedFetch('/api/hospitals/me');
+        if (res.ok) {
+          const data = await res.json();
+          setIcuBeds(data.hospital?.icuBedsAvailable ?? null);
+        }
+      } catch (_e) {
+        // leave as unknown
+      }
+    })();
+  }, []);
+
+  const reportCapacity = useCallback(async (next: number) => {
+    const clamped = Math.max(0, next);
+    setIcuBeds(clamped);
+    try {
+      await authedFetch('/api/hospitals/me/capacity', {
+        method: 'PATCH',
+        body: JSON.stringify({ icuBedsAvailable: clamped }),
+      });
+    } catch (_e) {
+      Alert.alert('Not saved', 'Could not report capacity to the server.');
+    }
+  }, []);
 
   // -------------------------------------------------------------------------
   // Dispatch Ambulance Action
@@ -116,11 +143,14 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   // Reserve ICU Bed Action
   // -------------------------------------------------------------------------
   const handleReserveBed = async (incidentId: string) => {
-    if (icuBeds <= 0) {
+    const target = incidents.find((i) => i.id === incidentId);
+    if (target?.status === 'ICU_RESERVED') return; // already reserved — don't double-decrement
+
+    if (icuBeds != null && icuBeds <= 0) {
       Alert.alert('ICU Capacity Full', 'No critical trauma ICU beds currently vacant.');
       return;
     }
-    setIcuBeds((b) => Math.max(0, b - 1));
+    if (icuBeds != null) await reportCapacity(icuBeds - 1);
 
     setIncidents((prev) =>
       prev.map((inc) => (inc.id === incidentId ? { ...inc, status: 'ICU_RESERVED' } : inc))
@@ -137,6 +167,19 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     } catch (_e) {}
 
     Alert.alert('Bed Reserved', '1 Trauma ICU Bed locked & surgical team alerted.');
+  };
+
+  // Close out a resolved incident so it leaves the live queue.
+  const handleResolve = async (incidentId: string) => {
+    setIncidents((prev) => prev.filter((inc) => inc.id !== incidentId));
+    try {
+      await authedFetch(`/api/incidents/${incidentId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'RESOLVED' }),
+      });
+    } catch (_e) {
+      Alert.alert('Not saved', 'Could not close the incident on the server.');
+    }
   };
 
   // Call Responder Handler
@@ -239,19 +282,21 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
             <View style={styles.bedControlRow}>
               <TouchableOpacity
                 style={styles.bedBtn}
-                onPress={() => setIcuBeds((b) => Math.max(0, b - 1))}
+                onPress={() => reportCapacity((icuBeds ?? 0) - 1)}
               >
                 <Text style={styles.bedBtnText}>−</Text>
               </TouchableOpacity>
-              <Text style={styles.statNumCyan}>{icuBeds}</Text>
+              <Text style={styles.statNumCyan}>{icuBeds ?? '—'}</Text>
               <TouchableOpacity
                 style={styles.bedBtn}
-                onPress={() => setIcuBeds((b) => b + 1)}
+                onPress={() => reportCapacity((icuBeds ?? 0) + 1)}
               >
                 <Text style={styles.bedBtnText}>+</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.statLabel}>VACANT ICU BEDS</Text>
+            <Text style={styles.statLabel}>
+              {icuBeds == null ? 'REPORT ICU BEDS' : 'VACANT ICU BEDS'}
+            </Text>
           </View>
         </View>
       </View>
@@ -336,7 +381,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                   <Text style={styles.hashVerifiedTag}>✓ VERIFIED</Text>
                 </View>
                 <Text style={styles.hashText} numberOfLines={1}>
-                  {incident.sha256Hash}
+                  {incident.sha256Hash || 'No certificate digest recorded'}
                 </Text>
               </View>
 
@@ -398,6 +443,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
                     <Text style={styles.secBtnText}>🗺️ ROUTE</Text>
                   </TouchableOpacity>
                 </View>
+
+                <TouchableOpacity
+                  style={styles.resolveBtn}
+                  onPress={() =>
+                    Alert.alert(
+                      'Close incident?',
+                      'This removes it from the live queue for every desk.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Close', style: 'destructive', onPress: () => handleResolve(incident.id) },
+                      ]
+                    )
+                  }
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.resolveBtnText}>✓ CLOSE INCIDENT</Text>
+                </TouchableOpacity>
               </View>
             </View>
           );
@@ -843,6 +905,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#ffffff',
     fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+  } as TextStyle,
+
+  resolveBtn: {
+    marginTop: 10,
+    backgroundColor: '#0f1a2e',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  } as ViewStyle,
+  resolveBtnText: {
+    fontSize: 10,
+    fontFamily: Platform.OS === 'web' ? 'JetBrains Mono, monospace' : 'monospace',
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 1,
   } as TextStyle,
 
   logoutBtn: {

@@ -9,10 +9,11 @@ import cors from 'cors';
 import crypto from 'crypto';
 import https from 'https';
 import mongoose from 'mongoose';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { generateLegalShieldPDF } from './certificate';
 import Incident, { type IIncident } from './models/Incident';
 import User from './models/User';
 import HospitalStaff from './models/HospitalStaff';
+import Hospital from './models/Hospital';
 import { initAuth, requireAuth, requireHospital, getAuthMode } from './middleware/auth';
 
 // ---------------------------------------------------------------------------
@@ -46,16 +47,6 @@ interface SOSErrorResponse {
 }
 
 type SOSResponse = SOSSuccessResponse | SOSErrorResponse;
-
-interface LegalShieldParams {
-  userId: string;
-  lat: number;
-  lng: number;
-  timestamp: string;
-  hash: string;
-  hospitalName?: string;
-  verifyUrl: string;
-}
 
 interface HospitalInfo {
   id: string;
@@ -213,6 +204,26 @@ async function fetchLiveOSMHospitals(userLat: number, userLng: number): Promise<
   });
 }
 
+/**
+ * Fills in bed counts for any hospital that has actually reported capacity.
+ * Everything else keeps bedsAvailable: null.
+ */
+async function withReportedCapacity(hospitals: HospitalInfo[]): Promise<HospitalInfo[]> {
+  if (hospitals.length === 0) return hospitals;
+  try {
+    const records = await Hospital.find({ hospitalId: { $in: hospitals.map((h) => h.id) } }).lean();
+    if (records.length === 0) return hospitals;
+    const byId = new Map(records.map((r) => [r.hospitalId, r.icuBedsAvailable]));
+    return hospitals.map((h) => ({
+      ...h,
+      bedsAvailable: byId.has(h.id) ? byId.get(h.id)! : h.bedsAvailable,
+    }));
+  } catch (err) {
+    console.warn('Capacity lookup failed; reporting capacity as unknown:', err);
+    return hospitals;
+  }
+}
+
 async function getNearestHospitals(
   userLat: number,
   userLng: number
@@ -223,9 +234,10 @@ async function getNearestHospitals(
       console.log(
         `🏥 [Live] ${liveHospitals.length} hospitals near [${userLat}, ${userLng}] — closest: ${liveHospitals[0].name} (${liveHospitals[0].distanceText})`
       );
+      const enriched = await withReportedCapacity(liveHospitals.slice(0, 4));
       return {
-        primaryHospital: liveHospitals[0],
-        backupHospitals: liveHospitals.slice(1, 4),
+        primaryHospital: enriched[0],
+        backupHospitals: enriched.slice(1),
       };
     }
   } catch (err) {
@@ -256,9 +268,10 @@ async function getNearestHospitals(
     return { primaryHospital: null, backupHospitals: [] };
   }
 
+  const enriched = await withReportedCapacity(inRange.slice(0, 3));
   return {
-    primaryHospital: inRange[0],
-    backupHospitals: inRange.slice(1, 3),
+    primaryHospital: enriched[0],
+    backupHospitals: enriched.slice(1),
   };
 }
 
@@ -516,305 +529,6 @@ app.post('/api/sos', requireAuth, async (req: Request<{}, SOSResponse, SOSReques
 });
 
 // ---------------------------------------------------------------------------
-// PDF Generation — Good Samaritan Legal Shield
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// PDF Generation — Ultra-Professional Good Samaritan Legal Shield Certificate
-// ---------------------------------------------------------------------------
-async function generateLegalShieldPDF({ userId, lat, lng, timestamp, hash, hospitalName, verifyUrl }: LegalShieldParams): Promise<string> {
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([595.28, 841.89]); // Standard A4
-
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontMono = await pdfDoc.embedFont(StandardFonts.Courier);
-
-  const { width, height } = page.getSize();
-  const margin: number = 36;
-  const certId: string = `SS-CERT-${Date.now().toString(36).toUpperCase()}-${hash.substring(0, 6).toUpperCase()}`;
-
-  // 1. Outer & Inner Certificate Security Borders
-  page.drawRectangle({
-    x: 18,
-    y: 18,
-    width: width - 36,
-    height: height - 36,
-    borderColor: rgb(0.82, 0.65, 0.25), // Gold border
-    borderWidth: 2,
-  });
-
-  page.drawRectangle({
-    x: 23,
-    y: 23,
-    width: width - 46,
-    height: height - 46,
-    borderColor: rgb(0.08, 0.15, 0.32), // Deep Navy thin border
-    borderWidth: 0.75,
-  });
-
-  // Corner Gold Accents
-  const cornerSize = 14;
-  page.drawRectangle({ x: 23, y: height - 23 - cornerSize, width: cornerSize, height: cornerSize, color: rgb(0.82, 0.65, 0.25) });
-  page.drawRectangle({ x: width - 23 - cornerSize, y: height - 23 - cornerSize, width: cornerSize, height: cornerSize, color: rgb(0.82, 0.65, 0.25) });
-  page.drawRectangle({ x: 23, y: 23, width: cornerSize, height: cornerSize, color: rgb(0.82, 0.65, 0.25) });
-  page.drawRectangle({ x: width - 23 - cornerSize, y: 23, width: cornerSize, height: cornerSize, color: rgb(0.82, 0.65, 0.25) });
-
-  // 2. Official Header Banner (Deep Navy)
-  page.drawRectangle({
-    x: 24,
-    y: height - 120,
-    width: width - 48,
-    height: 96,
-    color: rgb(0.06, 0.12, 0.25),
-  });
-
-  page.drawText('GOVERNMENT OF INDIA • STATUTORY EMERGENCY RECORD', {
-    x: margin + 10,
-    y: height - 50,
-    size: 9,
-    font: fontBold,
-    color: rgb(0.85, 0.72, 0.35), // Gold subhead
-  });
-
-  page.drawText('GOOD SAMARITAN LEGAL PROTECTION CERTIFICATE', {
-    x: margin + 10,
-    y: height - 76,
-    size: 17,
-    font: fontBold,
-    color: rgb(1, 1, 1),
-  });
-
-  page.drawText('ISSUED UNDER SECTION 134A, THE MOTOR VEHICLES ACT & MoRTH GAZETTE NOTIFICATION NO. 25035/101/2014-RS', {
-    x: margin + 10,
-    y: height - 98,
-    size: 7.5,
-    font: fontRegular,
-    color: rgb(0.85, 0.88, 0.95),
-  });
-
-  let y: number = height - 142;
-
-  // 3. Certificate ID & Verification Status Bar
-  page.drawRectangle({
-    x: margin,
-    y: y - 26,
-    width: width - 2 * margin,
-    height: 28,
-    color: rgb(0.94, 0.96, 1.0),
-    borderColor: rgb(0.8, 0.85, 0.95),
-    borderWidth: 1,
-  });
-
-  page.drawText(`CERTIFICATE ID: ${certId}`, {
-    x: margin + 12,
-    y: y - 17,
-    size: 9.5,
-    font: fontBold,
-    color: rgb(0.08, 0.15, 0.35),
-  });
-
-  page.drawText('LEGAL STATUS: 100% IMMUNITY ACTIVE', {
-    x: width - margin - 220,
-    y: y - 17,
-    size: 9.5,
-    font: fontBold,
-    color: rgb(0.1, 0.55, 0.2), // Green badge
-  });
-
-  y -= 48;
-
-  // 4. Certified Incident Record Table Header
-  page.drawText('1. CERTIFIED EMERGENCY INCIDENT RECORD', {
-    x: margin,
-    y,
-    size: 11,
-    font: fontBold,
-    color: rgb(0.08, 0.15, 0.35),
-  });
-  y -= 14;
-
-  const incidentDetails: [string, string][] = [
-    ['First Responder ID', `${userId} (Verified Good Samaritan)`],
-    ['Emergency Coordinates', `Lat ${lat.toFixed(6)}, Lng ${lng.toFixed(6)} (GPS Verified)`],
-    ['Server UTC Timestamp', `${timestamp} (Authoritative Zero-Trust)`],
-    ['Routed Hospital', hospitalName || 'No facility located — call 108'],
-    ['First-Aid Protocol', 'DRSABC Emergency Life Support & Voice Triage Conducted'],
-  ];
-
-  page.drawRectangle({
-    x: margin,
-    y: y - (incidentDetails.length * 20 + 6),
-    width: width - 2 * margin,
-    height: incidentDetails.length * 20 + 6,
-    color: rgb(0.98, 0.98, 0.99),
-    borderColor: rgb(0.85, 0.87, 0.92),
-    borderWidth: 1,
-  });
-
-  y -= 16;
-  for (const [label, value] of incidentDetails) {
-    page.drawText(label, {
-      x: margin + 12,
-      y,
-      size: 9,
-      font: fontBold,
-      color: rgb(0.3, 0.35, 0.45),
-    });
-    page.drawText(value, {
-      x: margin + 170,
-      y,
-      size: 9,
-      font: fontRegular,
-      color: rgb(0.1, 0.12, 0.15),
-    });
-    y -= 20;
-  }
-
-  y -= 16;
-
-  // 5. Cryptographic Proof Section
-  page.drawText('2. CRYPTOGRAPHIC TAMPER-PROOF RECORD', {
-    x: margin,
-    y,
-    size: 11,
-    font: fontBold,
-    color: rgb(0.08, 0.15, 0.35),
-  });
-  y -= 14;
-
-  page.drawRectangle({
-    x: margin,
-    y: y - 48,
-    width: width - 2 * margin,
-    height: 52,
-    color: rgb(0.95, 0.97, 0.95),
-    borderColor: rgb(0.4, 0.75, 0.45),
-    borderWidth: 1,
-  });
-
-  page.drawText('SHA-256 INTEGRITY DIGEST (BLOCKCHAIN-READY VERIFIABLE HASH):', {
-    x: margin + 12,
-    y: y - 14,
-    size: 8,
-    font: fontBold,
-    color: rgb(0.15, 0.45, 0.2),
-  });
-
-  page.drawText(hash, {
-    x: margin + 12,
-    y: y - 32,
-    size: 8.5,
-    font: fontMono,
-    color: rgb(0.05, 0.25, 0.08),
-  });
-
-  y -= 64;
-
-  // 6. Comprehensive Statutory Legal Immunity Declaration
-  page.drawText('3. STATUTORY LEGAL PROTECTION & IMMUNITY CLAUSE', {
-    x: margin,
-    y,
-    size: 11,
-    font: fontBold,
-    color: rgb(0.08, 0.15, 0.35),
-  });
-  y -= 14;
-
-  page.drawRectangle({
-    x: margin,
-    y: y - 150,
-    width: width - 2 * margin,
-    height: 154,
-    color: rgb(0.99, 0.99, 0.97),
-    borderColor: rgb(0.85, 0.75, 0.45),
-    borderWidth: 1,
-  });
-
-  y -= 16;
-  const legalClauses: string[] = [
-    '1. ABSOLUTE CIVIL & CRIMINAL IMMUNITY: Under Section 134A of the Motor Vehicles (Amendment) Act,',
-    '   2019, any person who renders emergency medical or non-medical care or assistance to an accident',
-    '   victim shall not be liable for any civil or criminal liability for any injury or death of the victim.',
-    '',
-    '2. PROHIBITION OF HARASSMENT: As directed by the Supreme Court of India in Writ Petition (Civil) No.',
-    '   235 of 2012, no police official, investigative agency, or hospital authority shall compel the Good',
-    '   Samaritan to disclose personal identity, address, or undergo mandatory witness interrogation.',
-    '',
-    '3. HOSPITAL ADMISSION MANDATE: All hospitals (Government and Private) are legally mandated to',
-    '   immediately provide emergency treatment without demanding advance payments or registration from',
-    '   the Good Samaritan.',
-  ];
-
-  for (const line of legalClauses) {
-    page.drawText(line, {
-      x: margin + 12,
-      y,
-      size: 8,
-      font: line.startsWith('1.') || line.startsWith('2.') || line.startsWith('3.') ? fontBold : fontRegular,
-      color: rgb(0.18, 0.2, 0.25),
-    });
-    y -= 12;
-  }
-
-  y -= 30;
-
-  // 7. Digital Seals & Signatures Footer
-  page.drawRectangle({
-    x: margin,
-    y: y - 60,
-    width: width - 2 * margin,
-    height: 64,
-    color: rgb(0.96, 0.97, 0.99),
-    borderColor: rgb(0.85, 0.88, 0.94),
-    borderWidth: 1,
-  });
-
-  page.drawText('CERTIFIED BY SAMARITAN SHIELD CAD DISPATCH ENGINE', {
-    x: margin + 14,
-    y: y - 20,
-    size: 8.5,
-    font: fontBold,
-    color: rgb(0.08, 0.15, 0.35),
-  });
-
-  page.drawText(`Digitally Signed & Validated • Timestamp: ${timestamp}`, {
-    x: margin + 14,
-    y: y - 36,
-    size: 7.5,
-    font: fontRegular,
-    color: rgb(0.4, 0.45, 0.55),
-  });
-
-  page.drawText('OFFICIAL DIGITAL SEAL', {
-    x: width - margin - 150,
-    y: y - 20,
-    size: 8.5,
-    font: fontBold,
-    color: rgb(0.8, 0.2, 0.2), // Red official seal text
-  });
-
-  page.drawText('VERIFIED EMERGENCY RECORD', {
-    x: width - margin - 150,
-    y: y - 36,
-    size: 7.5,
-    font: fontBold,
-    color: rgb(0.1, 0.5, 0.2),
-  });
-
-  // Footer Note
-  page.drawText('This certificate is an electronically generated legal record with cryptographically verified integrity. No physical signature required.', {
-    x: margin,
-    y: 28,
-    size: 6.5,
-    font: fontRegular,
-    color: rgb(0.5, 0.55, 0.65),
-  });
-
-  const pdfBytes: Uint8Array = await pdfDoc.save();
-  return Buffer.from(pdfBytes).toString('base64');
-}
-
-// ---------------------------------------------------------------------------
 // GET /api/verify/:hash — public integrity check
 //
 // A certificate's value rests on someone being able to check it. This returns
@@ -1012,6 +726,79 @@ app.get('/api/hospital/incidents', requireHospital, async (req: Request, res: Re
   } catch (err: unknown) {
     console.error('❌ Hospital incidents error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch hospital incidents.' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/hospitals/me/capacity — a desk reports its own ICU availability
+// Scoped to the caller's bound hospital: a desk cannot edit another's numbers.
+// ---------------------------------------------------------------------------
+app.patch('/api/hospitals/me/capacity', requireHospital, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { icuBedsAvailable } = req.body as { icuBedsAvailable?: number };
+
+    if (typeof icuBedsAvailable !== 'number' || !Number.isInteger(icuBedsAvailable) || icuBedsAvailable < 0) {
+      res.status(400).json({ status: 'error', message: 'icuBedsAvailable must be a non-negative integer.' });
+      return;
+    }
+
+    const user = await User.findOne({ firebaseUid: req.user!.uid }).lean();
+    if (!user?.hospitalId) {
+      res.status(409).json({ status: 'error', message: 'Account is not bound to a hospital.' });
+      return;
+    }
+
+    const record = await Hospital.findOneAndUpdate(
+      { hospitalId: user.hospitalId },
+      {
+        $set: {
+          hospitalId: user.hospitalId,
+          name: user.hospitalName || user.hospitalId,
+          icuBedsAvailable,
+          reportedBy: req.user!.email,
+        },
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    res.json({
+      status: 'success',
+      hospital: {
+        hospitalId: record.hospitalId,
+        name: record.name,
+        icuBedsAvailable: record.icuBedsAvailable,
+        updatedAt: record.updatedAt.toISOString(),
+      },
+    });
+  } catch (err: unknown) {
+    console.error('❌ Capacity update error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to update capacity.' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/hospitals/me — the desk's own hospital record
+// ---------------------------------------------------------------------------
+app.get('/api/hospitals/me', requireHospital, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = await User.findOne({ firebaseUid: req.user!.uid }).lean();
+    if (!user?.hospitalId) {
+      res.status(409).json({ status: 'error', message: 'Account is not bound to a hospital.' });
+      return;
+    }
+    const record = await Hospital.findOne({ hospitalId: user.hospitalId }).lean();
+    res.json({
+      status: 'success',
+      hospital: {
+        hospitalId: user.hospitalId,
+        name: user.hospitalName || user.hospitalId,
+        icuBedsAvailable: record?.icuBedsAvailable ?? null,
+        updatedAt: record?.updatedAt?.toISOString() ?? null,
+      },
+    });
+  } catch (err: unknown) {
+    console.error('❌ Hospital fetch error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch hospital.' });
   }
 });
 
