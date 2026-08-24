@@ -12,3 +12,16 @@ test_downloaded_*.pdf
 
 # Local run logs
 .logs/
+
+# Service-account credentials — a private key in a public repo is a full
+# project compromise. Keep them outside the tree, or point
+# FIREBASE_SERVICE_ACCOUNT / GOOGLE_APPLICATION_CREDENTIALS at a path in .env.
+# Patterns are deliberately broad: these files arrive named whatever the
+# Firebase console decided, sometimes with the separators stripped out.
+*adminsdk*.json
+*[Ss]ervice[Aa]ccount*.json
+*service-account*.json
+*service_account*.json
+*serviceaccount*.json
+credentials.json
+gcp-key*.json

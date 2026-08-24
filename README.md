@@ -68,6 +68,20 @@ npm run dev
 `FIREBASE_SERVICE_ACCOUNT` (raw JSON or a path) or
 `GOOGLE_APPLICATION_CREDENTIALS`.
 
+> **The service account and the app must belong to the same Firebase project.**
+> The Admin SDK verifies an ID token's audience against its own project, so a
+> key from project A cannot verify tokens minted for project B — every request
+> fails with `Firebase ID token has incorrect audience`. Check that the key's
+> `project_id` matches `EXPO_PUBLIC_FIREBASE_PROJECT_ID` in `app/.env`.
+
+> **Never commit the service-account JSON.** It carries a private key granting
+> full admin access to the project, and this repository is public. Keep it
+> outside the tree and reference it by path. `.gitignore` covers the common
+> filenames, but that is a safety net, not a licence to put one in the repo.
+> If a key is ever exposed — committed, pasted, emailed — rotate it in the
+> Firebase console (Project settings → Service accounts → Manage service
+> account permissions → Keys) and delete the old one.
+
 **The server refuses to start without auth credentials.** Every endpoint except
 `/api/health` and `/api/verify/:hash` verifies a Firebase ID token, and an
 unauthenticated emergency API would expose victim coordinates. For local work
@@ -161,6 +175,8 @@ it as secondary reporters, so five bystanders at one crash produce one dispatch
 Before running this with a real hospital:
 
 - [ ] Review Firebase Auth and Firestore security rules on the project in use
+- [ ] Confirm the Admin SDK key and the app config name the SAME Firebase project
+- [ ] Confirm no service-account key has ever been committed (`git log -p -- '*adminsdk*'`)
 - [ ] Provision hospital staff via the seed script; verify a citizen account
       cannot reach `/api/hospital/incidents`
 - [ ] Set `CORS_ORIGINS` to the deployed origins only
