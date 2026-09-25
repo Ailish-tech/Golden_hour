@@ -16,6 +16,15 @@ export const API_BASE: string =
   (Platform.OS === 'web' ? 'http://localhost:3000' : '');
 
 /**
+ * ML service base URL. Camera MJPEG and JPEG snapshots come from here, not
+ * from the Express API. Empty on native until EXPO_PUBLIC_ML_URL is set —
+ * a phone cannot reach the laptop's localhost either.
+ */
+export const ML_BASE: string =
+  process.env.EXPO_PUBLIC_ML_URL ||
+  (Platform.OS === 'web' ? 'http://localhost:8000' : '');
+
+/**
  * Run without Firebase, using a local stand-in identity.
  *
  * The server has a matching opt-in (ALLOW_INSECURE_NO_AUTH); with both set,
@@ -74,3 +83,8 @@ export const HAS_FIREBASE_CONFIG: boolean = MISSING_FIREBASE_VARS.length === 0;
  */
 export const AUTH_MODE: 'firebase' | 'local' =
   !LOCAL_DEV_AUTH && HAS_FIREBASE_CONFIG ? 'firebase' : 'local';
+
+/** Desk accounts seeded by the backend. Password is checked only in Firebase mode. */
+export const DEMO_HOSPITAL_EMAIL = 'hospital@local.test';
+export const DEMO_CONTROL_EMAIL = 'control@local.test';
+export const DEMO_STAFF_PASSWORD = 'password123';

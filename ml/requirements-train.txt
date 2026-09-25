@@ -1,0 +1,13 @@
+# ============================================================================
+# SAMARITAN SHIELD — stage-2 CNN training dependencies
+#
+# Kept out of requirements.txt on purpose: TensorFlow is a ~600 MB install and
+# the detection service runs perfectly well without it (stage 2 reports None).
+# Install this only when you are about to train.
+#
+#   pip install -r requirements-train.txt
+# ============================================================================
+
+tensorflow==2.18.0
+scikit-learn==1.6.0
+matplotlib==3.10.0

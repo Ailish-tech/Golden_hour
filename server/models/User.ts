@@ -8,7 +8,7 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-export type UserRole = 'citizen' | 'hospital';
+export type UserRole = 'citizen' | 'hospital' | 'control_room';
 
 export interface IUser extends Document {
   firebaseUid: string;
@@ -17,8 +17,13 @@ export interface IUser extends Document {
   role: UserRole;
   hospitalId?: string;
   hospitalName?: string;
+  zone?: string;
   lastKnownLat?: number;
   lastKnownLng?: number;
+  lastLocation?: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
   lastLoginAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -55,7 +60,7 @@ const UserSchema = new Schema<IUser>(
     role: {
       type: String,
       enum: {
-        values: ['citizen', 'hospital'],
+        values: ['citizen', 'hospital', 'control_room'],
         message: '{VALUE} is not a valid role',
       },
       required: true,
@@ -73,12 +78,28 @@ const UserSchema = new Schema<IUser>(
       trim: true,
     },
 
+    zone: {
+      type: String,
+      trim: true,
+    },
+
     lastKnownLat: {
       type: Number,
     },
 
     lastKnownLng: {
       type: Number,
+    },
+
+    lastLocation: {
+      type: {
+        type: String,
+        enum: ['Point'],
+      },
+      coordinates: {
+        type: [Number],
+        default: undefined,
+      },
     },
 
     lastLoginAt: {
@@ -96,6 +117,7 @@ const UserSchema = new Schema<IUser>(
 // Compound indexes
 // ---------------------------------------------------------------------------
 UserSchema.index({ role: 1, lastLoginAt: -1 });
+UserSchema.index({ lastLocation: '2dsphere' }, { sparse: true });
 
 // ---------------------------------------------------------------------------
 // Export

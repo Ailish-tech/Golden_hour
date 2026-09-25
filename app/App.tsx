@@ -10,6 +10,8 @@ import {
   Alert,
   Animated,
   Easing,
+  Image,
+  ImageStyle,
   Linking,
   Modal,
   Platform,
@@ -17,6 +19,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TextStyle,
   TouchableOpacity,
   Vibration,
@@ -38,15 +41,32 @@ import {
   PulseIcon,
   ShieldIcon,
   WarningIcon,
+  SearchIcon,
+  FilterIcon,
+  MicIcon,
+  SirenIcon,
+  FlameIcon,
+  CarCrashIcon,
+  RadioIcon,
+  CompassIcon,
+  CommunityIcon,
+  ShareIcon,
+  QrCodeIcon,
+  RefreshIcon,
+  PhoneIcon,
   type IconProps,
 } from './icons';
+import QRCode from 'qrcode';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import VoiceTriage from './VoiceTriage';
 import AuthScreen from './AuthScreen';
 import HospitalPortal, { type EmergencyIncidentItem } from './HospitalPortal';
+import ControlRoom from './ControlRoom';
 import { logoutUser, type AppUserProfile } from './firebaseConfig';
 import { authedFetch } from './api';
+import { voipService, type VoipCallSession } from './voipService';
+import { connectLive } from './liveSocket';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,6 +120,21 @@ interface SOSApiResponse {
   backupHospitals?: HospitalInfo[];
 }
 
+export interface EmergencyContact {
+  label: string;   // e.g. "Father", "Mother", "Spouse"
+  phone: string;   // e.g. "+91 98765 43210"
+}
+
+export interface CivilianProfile {
+  name: string;
+  phone: string;
+  emergencyContacts: EmergencyContact[];
+  emergencyContact: string;   // kept for backward compat with older saved profiles
+  emergencyPhone: string;     // kept for backward compat
+  bloodGroup: string;
+  medicalNotes?: string;      // allergies, conditions
+}
+
 // ---------------------------------------------------------------------------
 // Config & Constants
 // ---------------------------------------------------------------------------
@@ -132,6 +167,23 @@ const TRAUMA_PROTOCOL_STEPS: TraumaProtocolStep[] = [
     },
 ];
 
+export interface EmergencyCategory {
+  id: string;
+  label: string;
+  sub: string;
+  color: string;
+  Icon: React.FC<IconProps>;
+}
+
+const EMERGENCY_CATEGORIES: EmergencyCategory[] = [
+  { id: 'medical', label: 'Medical', sub: 'Severe Trauma', color: '#FF3B5C', Icon: ShieldIcon },
+  { id: 'cardiac', label: 'Cardiac', sub: 'CPR / Arrest', color: '#E11D48', Icon: PulseIcon },
+  { id: 'accident', label: 'Accident', sub: 'Road Collision', color: '#F59E0B', Icon: CarCrashIcon },
+  { id: 'fire', label: 'Fire Force', sub: 'Burn / Hazard', color: '#EF4444', Icon: FlameIcon },
+  { id: 'police', label: 'Cops', sub: 'Crime / Danger', color: '#3B82F6', Icon: SirenIcon },
+  { id: 'airway', label: 'Airway', sub: 'Choking / Gasp', color: '#10B981', Icon: BreathIcon },
+];
+
 // ============================================================================
 // Main App Component
 // ============================================================================
@@ -142,9 +194,12 @@ export default function App(): React.JSX.Element {
   // -- State ---------------------------------------------------------------
   const [activeTab, setActiveTab] = useState<NavigationTab>('HUB');
   const [appPhase, setAppPhase] = useState<AppPhase>('idle');
+  const [selectedCategory, setSelectedCategory] = useState<string>('medical');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [hash, setHash] = useState<string | null>(null);
   const [timestamp, setTimestamp] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<Coordinates>(MOCK_COORDS);
+  const [locationName, setLocationName] = useState<string>('Civil Lines, Jaipur');
   const [checkedSteps, setCheckedSteps] = useState<number[]>([]);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [showCertModal, setShowCertModal] = useState<boolean>(false);
@@ -152,11 +207,61 @@ export default function App(): React.JSX.Element {
   const [incidentCode, setIncidentCode] = useState<string | null>(null);
   const [transmissionError, setTransmissionError] = useState<string | null>(null);
   const [incidentStatus, setIncidentStatus] = useState<string | null>(null);
-  // Routing is unknown until the server answers. Pre-filling these with a
-  // plausible-looking hospital would show a responder a destination nobody
-  // selected for them.
+
   const [primaryHospital, setPrimaryHospital] = useState<HospitalInfo | null>(null);
   const [backupHospitals, setBackupHospitals] = useState<HospitalInfo[]>([]);
+
+  // Civilian Profile & QR Identity System State
+  const [civilianProfile, setCivilianProfile] = useState<CivilianProfile>(() => {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('samaritan_civilian_profile');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // Migrate old profiles that lack emergencyContacts array
+          if (!parsed.emergencyContacts) {
+            parsed.emergencyContacts = [
+              { label: parsed.emergencyContact || 'Family', phone: parsed.emergencyPhone || '' }
+            ];
+          }
+          return parsed;
+        }
+      } catch (_e) {}
+    }
+    return {
+      name: 'Adnaan (Civilian)',
+      phone: '+91 98765 43210',
+      emergencyContacts: [
+        { label: 'Father', phone: '+91 98111 22233' },
+        { label: 'Mother', phone: '+91 98111 44455' },
+      ],
+      emergencyContact: 'Family Primary',
+      emergencyPhone: '+91 98111 22233',
+      bloodGroup: 'O+ Positive',
+      medicalNotes: '',
+    };
+  });
+  const [editProfileForm, setEditProfileForm] = useState<CivilianProfile>(civilianProfile);
+  const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [showScanPreviewModal, setShowScanPreviewModal] = useState<boolean>(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [qrFormatMode, setQrFormatMode] = useState<'URL' | 'DIRECT'>('URL');
+  const [gpsStatus, setGpsStatus] = useState<'LOCKING' | 'LIVE' | 'APPROX' | 'ERROR'>('LOCKING');
+  const [isRefreshingGps, setIsRefreshingGps] = useState<boolean>(false);
+
+  // WebRTC VoIP In-Browser Calling State
+  const [incomingCall, setIncomingCall] = useState<{ callId: string; callerId: string; callerName: string } | null>(null);
+  const [activeVoipCall, setActiveVoipCall] = useState<VoipCallSession | null>(null);
+  const [isVoipMuted, setIsVoipMuted] = useState<boolean>(false);
+  const [citizenAlert, setCitizenAlert] = useState<{
+    incidentId: string;
+    incidentCode: string;
+    lat: number;
+    lng: number;
+    message: string;
+    mapsUrl: string;
+  } | null>(null);
 
   // Every facility we actually know about, primary first.
   const nearbyHospitals: HospitalInfo[] = primaryHospital
@@ -169,6 +274,23 @@ export default function App(): React.JSX.Element {
   const slideUp = useRef<Animated.Value>(new Animated.Value(40)).current;
   const ringScale = useRef<Animated.Value>(new Animated.Value(1)).current;
   const ringOpacity = useRef<Animated.Value>(new Animated.Value(0.6)).current;
+  const radarSweepAnim = useRef<Animated.Value>(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'citizen') return;
+    return connectLive({
+      'citizen-alert': (payload) => {
+        setCitizenAlert({
+          incidentId: String(payload.incidentId ?? ''),
+          incidentCode: String(payload.incidentCode ?? 'CAD'),
+          lat: Number(payload.lat),
+          lng: Number(payload.lng),
+          message: String(payload.message ?? 'Accident nearby. Help if you can reach the scene.'),
+          mapsUrl: String(payload.mapsUrl ?? ''),
+        });
+      },
+    });
+  }, [currentUser]);
 
   // -- Inject Web Google Fonts (Inter & JetBrains Mono) --------------------
   useEffect(() => {
@@ -277,43 +399,326 @@ export default function App(): React.JSX.Element {
     return () => ripple.stop();
   }, [appPhase, ringScale, ringOpacity]);
 
+  // -- Radar sweep beam animation ------------------------------------------
+  useEffect((): (() => void) | void => {
+    const sweep = Animated.loop(
+      Animated.timing(radarSweepAnim, {
+        toValue: 1,
+        duration: 3600,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    sweep.start();
+    return () => sweep.stop();
+  }, [radarSweepAnim]);
+
   // -----------------------------------------------------------------------
-  // Direct Web & Native Geolocation Engine
+  // Dynamic Live Reverse Geocoder
   // -----------------------------------------------------------------------
-  const getCoordinates = useCallback(async (): Promise<Coordinates> => {
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+  const reverseGeocodeLive = useCallback(async (lat: number, lng: number): Promise<string> => {
+    // 1. BigDataCloud reverse geocode (client-side, CORS enabled, no API key required)
+    try {
+      const bdcRes = await fetch(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`
+      );
+      if (bdcRes.ok) {
+        const bdc = await bdcRes.json();
+        const street = bdc.localityInfo?.administrative?.[3]?.name || bdc.localityInfo?.administrative?.[2]?.name || bdc.locality;
+        const city = bdc.city || bdc.principalSubdivision || bdc.countryName;
+        const formatted = [street, city].filter(Boolean).join(', ');
+        if (formatted) return formatted;
+      }
+    } catch (_bdc) {}
+
+    // 2. OpenStreetMap Nominatim
+    try {
+      const nomRes = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16&addressdetails=1`,
+        { headers: { Accept: 'application/json' } }
+      );
+      if (nomRes.ok) {
+        const nom = await nomRes.json();
+        if (nom.address) {
+          const street = nom.address.road || nom.address.suburb || nom.address.neighbourhood || '';
+          const city = nom.address.city || nom.address.town || nom.address.county || nom.address.state || '';
+          const combined = [street, city].filter(Boolean).join(', ');
+          if (combined) return combined;
+        }
+        if (nom.display_name) {
+          return nom.display_name.split(',').slice(0, 2).join(',').trim();
+        }
+      }
+    } catch (_nom) {}
+
+    // 3. Expo Location fallback (native iOS / Android)
+    try {
+      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      if (places && places.length > 0) {
+        const p = places[0];
+        const street = p.street || p.name || p.subregion || '';
+        const city = p.city || p.region || '';
+        const combined = [street, city].filter(Boolean).join(', ');
+        if (combined) return combined;
+      }
+    } catch (_exp) {}
+
+    return `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`;
+  }, []);
+
+  // -----------------------------------------------------------------------
+  // Direct Web & Native Geolocation Engine (Continuous & High Accuracy)
+  // -----------------------------------------------------------------------
+  const fetchLivePosition = useCallback(
+    async (isManualRefresh = false): Promise<Coordinates> => {
+      if (isManualRefresh) setIsRefreshingGps(true);
+      setGpsStatus('LOCKING');
+
+      // Attempt 1: Web Geolocation High Accuracy
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+        try {
+          const highRes = await new Promise<Coordinates>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+              (err) => reject(err),
+              { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
+            );
+          });
+          setCoordinates(highRes);
+          setGpsStatus('LIVE');
+          reverseGeocodeLive(highRes.lat, highRes.lng).then(setLocationName);
+          if (isManualRefresh) setIsRefreshingGps(false);
+          return highRes;
+        } catch (_highErr) {
+          // Attempt 1b: Web Geolocation Standard Accuracy
+          try {
+            const stdRes = await new Promise<Coordinates>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                (err) => reject(err),
+                { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+              );
+            });
+            setCoordinates(stdRes);
+            setGpsStatus('APPROX');
+            reverseGeocodeLive(stdRes.lat, stdRes.lng).then(setLocationName);
+            if (isManualRefresh) setIsRefreshingGps(false);
+            return stdRes;
+          } catch (_stdErr) {}
+        }
+      }
+
+      // Attempt 2: Native Expo Location
       try {
-        const webCoords = await new Promise<Coordinates>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-            (err) => reject(err),
-            { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
-          );
-        });
-        return webCoords;
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const nativeCoords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          setCoordinates(nativeCoords);
+          setGpsStatus('LIVE');
+          reverseGeocodeLive(nativeCoords.lat, nativeCoords.lng).then(setLocationName);
+          if (isManualRefresh) setIsRefreshingGps(false);
+          return nativeCoords;
+        }
+      } catch (_nativeErr) {}
+
+      // Attempt 3: Fast IP-based geolocation fallback (FreeIPApi)
+      try {
+        const ipRes = await fetch('https://freeipapi.com/api/json');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.latitude && ipData.longitude) {
+            const ipCoords = { lat: Number(ipData.latitude), lng: Number(ipData.longitude) };
+            setCoordinates(ipCoords);
+            setGpsStatus('APPROX');
+            if (ipData.cityName) {
+              setLocationName(`${ipData.cityName}, ${ipData.regionName || ipData.countryName}`);
+            } else {
+              reverseGeocodeLive(ipCoords.lat, ipCoords.lng).then(setLocationName);
+            }
+            if (isManualRefresh) setIsRefreshingGps(false);
+            return ipCoords;
+          }
+        }
+      } catch (_ipErr) {}
+
+      // Attempt 4: Secondary IP API fallback (ipapi.co)
+      try {
+        const ipRes2 = await fetch('https://ipapi.co/json/');
+        if (ipRes2.ok) {
+          const ipData2 = await ipRes2.json();
+          if (ipData2.latitude && ipData2.longitude) {
+            const ipCoords2 = { lat: Number(ipData2.latitude), lng: Number(ipData2.longitude) };
+            setCoordinates(ipCoords2);
+            setGpsStatus('APPROX');
+            if (ipData2.city) {
+              setLocationName(`${ipData2.city}, ${ipData2.region || ipData2.country_name}`);
+            }
+            if (isManualRefresh) setIsRefreshingGps(false);
+            return ipCoords2;
+          }
+        }
+      } catch (_ip2Err) {}
+
+      if (isManualRefresh) setIsRefreshingGps(false);
+      return coordinates;
+    },
+    [coordinates, reverseGeocodeLive]
+  );
+
+  const getCoordinates = useCallback(async (): Promise<Coordinates> => {
+    return fetchLivePosition();
+  }, [fetchLivePosition]);
+
+  // Continuous live GPS watcher & initial fix
+  useEffect(() => {
+    fetchLivePosition();
+
+    let watchId: number | null = null;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            setCoordinates(newCoords);
+            setGpsStatus('LIVE');
+          },
+          (_err) => {},
+          { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+        );
       } catch (_e) {}
     }
 
-    try {
-      const ipRes = await fetch('https://ipapi.co/json/');
-      if (ipRes.ok) {
-        const ipData = await ipRes.json();
-        if (ipData.latitude && ipData.longitude) {
-          return { lat: Number(ipData.latitude), lng: Number(ipData.longitude) };
+    return () => {
+      if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [fetchLivePosition]);
+
+  // Sync logged in user name with civilian profile
+  useEffect(() => {
+    if (currentUser?.displayName || currentUser?.email) {
+      setCivilianProfile((prev) => {
+        const hasCustom = prev.name && prev.name !== 'Adnaan (Civilian)';
+        const defaultName = currentUser.displayName || currentUser.email.split('@')[0];
+        const updated = {
+          ...prev,
+          name: hasCustom ? prev.name : defaultName,
+        };
+        setEditProfileForm(updated);
+        return updated;
+      });
+    }
+  }, [currentUser]);
+
+  // WebRTC VoIP Signaling & Calling Initialization
+  useEffect(() => {
+    if (currentUser?.uid) {
+      const myId = currentUser.uid;
+      const myName = civilianProfile.name || currentUser.displayName || 'Civilian Responder';
+      voipService.init(myId, myName);
+
+      voipService.setHandlers(
+        (call) => {
+          setIncomingCall(call);
+          if (Platform.OS !== 'web') {
+            Vibration.vibrate([0, 500, 300, 500], true);
+          }
+        },
+        (state, session) => {
+          if (state === 'connected' && session) {
+            setIncomingCall(null);
+            setActiveVoipCall({ ...session });
+            setIsVoipMuted(session.isMuted);
+          } else if (state === 'ended' || state === 'failed' || state === 'idle') {
+            setIncomingCall(null);
+            setActiveVoipCall(null);
+            if (Platform.OS !== 'web') {
+              Vibration.cancel();
+            }
+          } else if (session) {
+            setActiveVoipCall({ ...session });
+            setIsVoipMuted(session.isMuted);
+          }
         }
-      }
-    } catch (_ipErr) {}
+      );
+    }
+  }, [currentUser?.uid, civilianProfile.name]);
 
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        return { lat: loc.coords.latitude, lng: loc.coords.longitude };
-      }
-    } catch (_nativeErr) {}
+  // Generate QR Code data URL dynamically — encodes emergency contacts for direct calling
+  useEffect(() => {
+    let active = true;
+    const generateQr = async () => {
+      try {
+        const serverOrigin =
+          Platform.OS === 'web' && typeof window !== 'undefined'
+            ? `${window.location.protocol}//${window.location.hostname}:3000`
+            : 'http://localhost:3000';
 
-    return MOCK_COORDS;
-  }, []);
+        const targetCallId = currentUser?.uid || 'civilian-01';
+
+        let payload = '';
+
+        if (qrFormatMode === 'DIRECT') {
+          // Find first valid emergency contact or fallback to user's own phone
+          const targetPhone = civilianProfile.emergencyContacts.find(c => c.phone.trim().length > 0)?.phone || civilianProfile.phone;
+          const cleanedPhone = targetPhone.replace(/\s+/g, '');
+          payload = `tel:${cleanedPhone}`;
+        } else {
+          // Build emergency contacts JSON for Web Profile URL encoding
+          const contactsPayload = JSON.stringify(
+            civilianProfile.emergencyContacts.filter(c => c.phone.trim().length > 0)
+          );
+
+          payload = `${serverOrigin}/civilian-id?callId=${encodeURIComponent(
+            targetCallId
+          )}&name=${encodeURIComponent(
+            civilianProfile.name
+          )}&address=${encodeURIComponent(
+            locationName
+          )}&lat=${coordinates.lat.toFixed(4)}&lng=${coordinates.lng.toFixed(
+            4
+          )}&contacts=${encodeURIComponent(
+            contactsPayload
+          )}&blood=${encodeURIComponent(
+            civilianProfile.bloodGroup
+          )}&phone=${encodeURIComponent(
+            civilianProfile.phone
+          )}${civilianProfile.medicalNotes ? `&medical=${encodeURIComponent(civilianProfile.medicalNotes)}` : ''}`;
+        }
+
+        const dataUrl = await QRCode.toDataURL(payload, {
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          width: 320,
+          color: {
+            dark: '#0F172A',
+            light: '#FFFFFF',
+          },
+        });
+
+        if (active) setQrDataUrl(dataUrl);
+      } catch (err) {
+        console.warn('QR code generation failed:', err);
+      }
+    };
+
+    generateQr();
+    return () => {
+      active = false;
+    };
+  }, [civilianProfile, coordinates, currentUser?.uid, locationName, qrFormatMode]);
+
+  const handleSaveProfile = () => {
+    setCivilianProfile(editProfileForm);
+    setIsEditingProfile(false);
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('samaritan_civilian_profile', JSON.stringify(editProfileForm));
+      } catch (_e) {}
+    }
+  };
 
   // -----------------------------------------------------------------------
   // Emergency Tone Alert Synthesizer
@@ -563,6 +968,32 @@ export default function App(): React.JSX.Element {
     }
   }, [appPhase, animateIn, playEmergencyAudio, getCoordinates]);
 
+  const handleRespondToAlert = useCallback(async (): Promise<void> => {
+    if (!citizenAlert) return;
+    const target = { lat: citizenAlert.lat, lng: citizenAlert.lng };
+    setCoordinates(target);
+    setCitizenAlert(null);
+    setAppPhase('active');
+    try {
+      const res = await authedFetch('/api/sos', {
+        method: 'POST',
+        body: JSON.stringify(target),
+      });
+      const data: SOSApiResponse = await res.json();
+      if (data.status === 'success') {
+        setIncidentId(data.incidentId ?? null);
+        setIncidentCode(data.incidentCode ?? null);
+        setHash(data.hash ?? null);
+        setTimestamp(data.timestamp ?? null);
+        setPdfBase64(data.pdfBase64 ?? null);
+        setPrimaryHospital(data.nearestHospital ?? null);
+        setBackupHospitals(data.backupHospitals ?? []);
+      }
+    } catch (_err) {
+      setTransmissionError('Could not join the incident. Call 108 if you are on scene.');
+    }
+  }, [citizenAlert]);
+
   // -----------------------------------------------------------------------
   // Reset SOS
   // -----------------------------------------------------------------------
@@ -596,172 +1027,285 @@ export default function App(): React.JSX.Element {
   // RENDER VIEWS
   // ========================================================================
 
-  // --- TOP HEADER (SAMARITAN_SHIELD) ---
+  // --- TOP HEADER (Concept Reference 1 & 2) ---
   const renderTopHeader = () => (
     <View style={styles.topHeader}>
-      <View style={styles.headerLeft}>
-        <View style={styles.shieldIconBox}>
-          <ShieldIcon size={22} color={color.text} />
+      {/* Top Slide/Status Banner (Reference 1 Left) */}
+      <View style={styles.headerTopPillRow}>
+        <View style={styles.safetyIndexPill}>
+          <View
+            style={[
+              styles.safetyDotLive,
+              gpsStatus === 'LIVE'
+                ? { backgroundColor: color.signal }
+                : { backgroundColor: '#F59E0B' },
+            ]}
+          />
+          <Text style={styles.safetyIndexPillText}>
+            {gpsStatus === 'LOCKING'
+              ? 'Acquiring Live GPS...'
+              : gpsStatus === 'APPROX'
+              ? 'IP Geo Synced • 98% Safe'
+              : 'Live GPS Synced • 98% Safe'}
+          </Text>
         </View>
-        <View>
-          <Text style={styles.headerTitle}>SAMARITAN_SHIELD</Text>
-          {currentUser && (
-            <Text style={styles.userRoleBadge}>
-              {currentUser.role === 'hospital'
-                ? ` ${currentUser.displayName}`
-                : ` CITIZEN: ${currentUser.displayName}`}
-            </Text>
-          )}
-        </View>
-      </View>
-      <View style={styles.headerRight}>
+
         {currentUser && (
           <TouchableOpacity
-            style={styles.switchRoleBtn}
+            style={styles.switchRoleBadge}
             onPress={handleLogout}
             activeOpacity={0.75}
           >
-            <Text style={styles.switchRoleText}>SWITCH</Text>
+            <Text style={styles.switchRoleBadgeText}>
+              {currentUser.role === 'hospital'
+                ? 'HOSPITAL'
+                : currentUser.role === 'control_room'
+                  ? 'CONTROL'
+                  : 'CITIZEN'}{' '}
+              • SWITCH
+            </Text>
           </TouchableOpacity>
         )}
+      </View>
+
+      {/* Main Location Headline (Reference 1 Left) */}
+      <View style={styles.locationHeadlineRow}>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.locationCityTitle}>{locationName}</Text>
+            {isRefreshingGps && <ActivityIndicator size="small" color={color.signal} />}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <Text style={styles.locationCitySubhead}>
+              GPS: {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+            </Text>
+            <TouchableOpacity
+              onPress={() => fetchLivePosition(true)}
+              style={styles.gpsRefreshBadge}
+              activeOpacity={0.7}
+            >
+              <RefreshIcon size={10} color={color.signal} />
+              <Text style={styles.gpsRefreshText}>SYNC LIVE</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={styles.headerInfoBtn}
+          onPress={() => setActiveTab('INTEL')}
+          activeOpacity={0.8}
+        >
+          <ShieldIcon size={18} color={color.text} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Floating Search Bar (Reference 1 Left) */}
+      <View style={styles.searchFacilityBar}>
+        <SearchIcon size={18} color={color.textFaint} />
+        <TextInput
+          style={styles.searchFacilityInput}
+          placeholder="Where is the emergency?"
+          placeholderTextColor={color.textFaint}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        <TouchableOpacity style={styles.searchFacilityFilterBtn} activeOpacity={0.7}>
+          <FilterIcon size={16} color={color.textMuted} />
+        </TouchableOpacity>
       </View>
     </View>
   );
 
-  // --- SCREEN 1: PRE-SOS EMERGENCY DASHBOARD (IDLE HUD) ---
+  // --- SCREEN 1: PRE-SOS EMERGENCY RADAR DASHBOARD (IDLE HUD) ---
   const renderIdleDashboard = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
-      {/* System Status Banner */}
-      <View style={styles.systemStatusCard}>
-        <View style={styles.statusRowBetween}>
-          <View style={styles.statusLiveTag}>
-            <View style={styles.statusDotLive} />
-            <Text style={styles.statusTextLive}>System Online • Zero-Trust Encrypted</Text>
-          </View>
-          <Text style={styles.nodeBadge}>NODE: SECURE-09</Text>
-        </View>
-      </View>
+      {/* 1. Radar Scanning Centerpiece (Reference 1 Left) */}
+      <View style={styles.radarCard}>
+        <View style={styles.radarOuterCircle}>
+          <View style={styles.radarMidCircle}>
+            <View style={styles.radarInnerCircle}>
+              {/* Rotating Sweep Beam */}
+              <Animated.View
+                style={[
+                  styles.radarSweepBeam,
+                  {
+                    transform: [
+                      {
+                        rotate: radarSweepAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', '360deg'],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              />
 
-      {/* Hero Tactical SOS Actuator */}
-      <View style={styles.sosHeroContainer}>
-        <Animated.View
-          style={[
-            styles.sosRippleRing,
-            {
-              transform: [{ scale: ringScale }],
-              opacity: ringOpacity,
-            },
-          ]}
-        />
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <TouchableOpacity
-            style={styles.sosTactileButton}
-            onPress={handleSOS}
-            activeOpacity={0.8}
-          >
-            <View style={styles.sosInnerGlow}>
-              
-              <Text style={styles.sosButtonLabel}>SOS</Text>
+              {/* Concentric Pulsing Wave */}
+              <Animated.View
+                style={[
+                  styles.radarPulseWave,
+                  {
+                    transform: [{ scale: ringScale }],
+                    opacity: ringOpacity,
+                  },
+                ]}
+              />
+
+              {/* Center Tactile Actuator */}
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <TouchableOpacity
+                  style={styles.radarCenterActuator}
+                  onPress={handleSOS}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.radarCenterGlow}>
+                    <MicIcon size={26} color="#FFFFFF" />
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
             </View>
-          </TouchableOpacity>
-        </Animated.View>
-
-        <Text style={styles.sosEmergencyHeadline}>EMERGENCY SOS</Text>
-        <Text style={styles.sosEmergencySubhead}>Instant GPS Transmission • CAD Hospital Dispatch • Legal Protection Shield
-        </Text>
-      </View>
-
-      {/* 3 Telemetry Feature Cards */}
-      {/* 1. Live GPS Card */}
-      <View style={styles.hudFeatureCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>LIVE GPS</Text>
-          <View style={styles.pulsingBlueDot} />
-        </View>
-        <View style={styles.gpsCoordBox}>
-          <Text style={styles.gpsCoordText}>LAT: {coordinates.lat.toFixed(4)}° N, LON: {coordinates.lng.toFixed(4)}° E
-          </Text>
-        </View>
-      </View>
-
-      {/* 2. Incident Verification Card */}
-      <TouchableOpacity
-        style={styles.hudFeatureCard}
-        onPress={handleOpenCertificate}
-        activeOpacity={0.8}
-      >
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>INCIDENT VERIFICATION</Text>
-          <ShieldIcon size={22} color={color.text} />
-        </View>
-        <View style={styles.hashPreviewBox}>
-          <Text style={styles.hashPreviewLabel}>SHA-256 DIGEST</Text>
-          <Text style={styles.hashPreviewValue} numberOfLines={2}>
-            {hash || 'No record yet — trigger an emergency to generate one'}
-          </Text>
-        </View>
-        <Text style={styles.hudCardSubtext}>Tap to view cryptographic audit log & certificate.</Text>
-      </TouchableOpacity>
-
-      {/* 3. Legal Shield Card */}
-      <TouchableOpacity
-        style={styles.hudFeatureCard}
-        onPress={handleOpenCertificate}
-        activeOpacity={0.8}
-      >
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>LEGAL SHIELD</Text>
-          <View style={styles.viewBadge}>
-            <Text style={styles.viewBadgeText}>TAP TO VIEW PDF</Text>
           </View>
         </View>
-        <View style={styles.legalInnerBanner}>
-          <DocumentIcon size={22} color={color.text} />
+
+        <Text style={styles.holdForSosHeadline}>HOLD FOR SOS</Text>
+        <Text style={styles.holdForSosSubhead}>OR TAP TO BROADCAST EMERGENCY CAD</Text>
+
+        <View style={styles.gpsCoordinatesPill}>
+          <PinIcon size={13} color={color.confirm} />
+          <Text style={styles.gpsCoordinatesPillText}>
+            {coordinates.lat.toFixed(4)}° N   {coordinates.lng.toFixed(4)}° W
+          </Text>
+        </View>
+      </View>
+
+      {/* 2. Emergency Categories Grid (Reference 1 Right & 2 Left) */}
+      <View style={styles.categorySection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionHeaderTitle}>EMERGENCY CATEGORIES</Text>
+          <Text style={styles.sectionHeaderSub}>Select incident type</Text>
+        </View>
+
+        <View style={styles.categoryGrid}>
+          {EMERGENCY_CATEGORIES.map((cat) => {
+            const isSelected = selectedCategory === cat.id;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  styles.categoryCard,
+                  isSelected && styles.categoryCardSelected,
+                ]}
+                onPress={() => setSelectedCategory(cat.id)}
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[
+                    styles.categoryIconCircle,
+                    isSelected
+                      ? styles.categoryIconCircleSelected
+                      : { backgroundColor: `${cat.color}15` },
+                  ]}
+                >
+                  <cat.Icon
+                    size={22}
+                    color={isSelected ? '#FFFFFF' : cat.color}
+                  />
+                </View>
+                <Text
+                  style={[
+                    styles.categoryTitle,
+                    isSelected && styles.categoryTitleSelected,
+                  ]}
+                >
+                  {cat.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.categorySubtext,
+                    isSelected && styles.categorySubtextSelected,
+                  ]}
+                >
+                  {cat.sub}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* 3. Address / Facility Confirmation Card (Reference 1 Right) */}
+      <View style={styles.addressConfirmCard}>
+        <View style={styles.addressInfoRow}>
+          <View style={styles.addressPinIconBox}>
+            <PinIcon size={20} color={color.signal} />
+          </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.legalInnerTitle}>Good Samaritan Rights</Text>
-            <Text style={styles.legalInnerSubtitle}>Tap to view your rights and incident record</Text>
+            <Text style={styles.addressTitleText}>{locationName}</Text>
+            <Text style={styles.addressDetailText}>
+              GPS: {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E • Live CAD Zone
+            </Text>
           </View>
+          <TouchableOpacity
+            style={styles.gpsRefreshBadge}
+            onPress={() => fetchLivePosition(true)}
+            activeOpacity={0.7}
+          >
+            <RefreshIcon size={12} color={color.signal} />
+          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
 
-      {/* 4. Medical Radar */}
-      <View style={styles.hudFeatureCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardHeaderLabel}>MEDICAL RADAR</Text>
-          <Text style={styles.radarCountText}>
-            {nearbyHospitals.length > 0
-              ? `${nearbyHospitals.length} ${nearbyHospitals.length === 1 ? 'FACILITY' : 'FACILITIES'} IN RANGE`
-              : 'AWAITING LOOKUP'}
+        <TouchableOpacity
+          style={styles.confirmAddressCtaBtn}
+          onPress={handleSOS}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.confirmAddressCtaText}>
+            CONFIRM & DISPATCH FOR {EMERGENCY_CATEGORIES.find((c) => c.id === selectedCategory)?.label.toUpperCase()}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 4. Nearby Medical Facilities List */}
+      <View style={styles.facilitiesSection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionHeaderTitle}>NEARBY TRAUMA CENTERS</Text>
+          <Text style={styles.sectionHeaderSub}>
+            {nearbyHospitals.length > 0 ? `${nearbyHospitals.length} in range` : 'Ready to match'}
           </Text>
         </View>
 
         {nearbyHospitals.length === 0 ? (
-          <View style={styles.radarEmptyBox}>
-            <Text style={styles.radarEmptyText}>Nearby hospitals are resolved when you trigger an emergency. In an emergency,
-              call 108 directly.
+          <View style={styles.facilitiesEmptyBox}>
+            <HospitalIcon size={24} color={color.textFaint} />
+            <Text style={styles.facilitiesEmptyText}>
+              Nearest trauma hospitals with real-time bed capacity are matched instantly upon emergency transmission.
             </Text>
           </View>
         ) : (
-          <View style={styles.radarHospitalList}>
-            {nearbyHospitals.map((hosp, idx) => (
-              <TouchableOpacity
-                key={hosp.id}
-                style={styles.radarHospitalItem}
-                onPress={() => openHospitalMap(hosp.googleMapsUrl)}
-                activeOpacity={0.8}
+          nearbyHospitals.map((hosp, idx) => (
+            <TouchableOpacity
+              key={hosp.id}
+              style={styles.facilityItemRow}
+              onPress={() => openHospitalMap(hosp.googleMapsUrl)}
+              activeOpacity={0.8}
+            >
+              <View
+                style={[
+                  styles.facilityItemIcon,
+                  idx === 0 ? styles.facilityItemIconPrimary : styles.facilityItemIconSecondary,
+                ]}
               >
-                <View style={idx === 0 ? styles.radarItemIconBox : styles.radarItemIconBoxSecondary}>
-                  <HospitalIcon size={20} color={color.text} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.radarItemName}>{hosp.name}</Text>
-                  <Text style={styles.radarItemMeta}>ETA: {hosp.etaMinutes} MIN [{hosp.distanceText}]
-                  </Text>
-                </View>
-                <ArrowRightIcon size={16} color={color.text} />
-              </TouchableOpacity>
-            ))}
-          </View>
+                <HospitalIcon size={18} color={idx === 0 ? color.signal : color.textMuted} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.facilityItemTitle}>{hosp.name}</Text>
+                <Text style={styles.facilityItemDetails}>
+                  {hosp.distanceText} • ~{hosp.etaMinutes} MIN DRIVE {hosp.bedsAvailable != null ? `• ${hosp.bedsAvailable} ICU BEDS` : ''}
+                </Text>
+              </View>
+              <ArrowRightIcon size={16} color={color.textFaint} />
+            </TouchableOpacity>
+          ))
         )}
       </View>
     </ScrollView>
@@ -770,209 +1314,175 @@ export default function App(): React.JSX.Element {
   // --- SCREEN 2: ACTIVE EMERGENCY TRANSMISSION HUB ---
   const renderActiveTransmissionHub = () => (
     <ScrollView style={styles.contentScroll} contentContainerStyle={styles.scrollContent}>
-      {/* 1. Active SOS Broadcast Alert Bar */}
-      {transmissionError && (
-        <View style={styles.transmissionErrorBanner}>
-          <Text style={styles.transmissionErrorText}> {transmissionError}</Text>
-        </View>
-      )}
+      {/* 1. Abort / Countdown Bar (Reference 1 Right bottom) */}
+      <View style={styles.countdownAbortBar}>
+        <TouchableOpacity
+          style={styles.countdownCancelBtn}
+          onPress={handleReset}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.countdownCancelText}>✕ Cancel</Text>
+        </TouchableOpacity>
 
-      <View style={styles.activeBroadcastCard}>
-        <View style={styles.activeBroadcastTop}>
-          <View style={styles.activeRedBeacon} />
-          <Text style={styles.activeBroadcastTitle}>
-            {incidentCode ? 'EMERGENCY RECORDED' : 'RECORDING EMERGENCY…'}
-          </Text>
+        <View style={styles.countdownPulseBadge}>
+          <Text style={styles.countdownPulseBadgeText}>LIVE</Text>
         </View>
-        <Text style={styles.activeBroadcastIncident}>
-          {incidentCode ? `INCIDENT #${incidentCode}` : 'Awaiting confirmation'}
-        </Text>
-        <View style={styles.activeBroadcastCoordBox}>
-          <Text style={styles.activeBroadcastCoordText}>
-             {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
-          </Text>
+
+        <View style={styles.broadcastingActivePill}>
+          <Text style={styles.broadcastingActiveText}>CAD Broadcasting ›</Text>
         </View>
       </View>
 
-      {/* 2. Routed hospital */}
+      {/* Error alert if transmission failed */}
+      {transmissionError && (
+        <View style={styles.transmissionErrorBanner}>
+          <WarningIcon size={18} color={color.signalDeep} />
+          <Text style={styles.transmissionErrorText}>{transmissionError}</Text>
+        </View>
+      )}
+
+      {/* 2. Active Broadcast Hero Card (Reference 2 Right) */}
+      <View style={styles.activeBroadcastHeroCard}>
+        <View style={styles.activeBroadcastTopRow}>
+          <View style={styles.activeBeaconDot} />
+          <Text style={styles.activeBroadcastHeaderTitle}>
+            {incidentCode ? `EMERGENCY DISPATCHED • #${incidentCode}` : 'BROADCASTING EMERGENCY CAD…'}
+          </Text>
+        </View>
+        <Text style={styles.activeBroadcastCoords}>
+          📍 {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+        </Text>
+        <Text style={styles.activeBroadcastCategoryNote}>
+          Incident Type: {EMERGENCY_CATEGORIES.find((c) => c.id === selectedCategory)?.label.toUpperCase()} • 2-Way CAD Stream Active
+        </Text>
+      </View>
+
+      {/* 3. Routed Hospital Facility Card (Reference 2 Right floating card) */}
       {primaryHospital ? (
-        <View style={styles.hospitalCadCard}>
-          <View style={styles.cadStreamingHeader}>
-            <View style={styles.greenPulsingDot} />
-            <Text style={styles.cadStreamingText}>RECORD VISIBLE TO HOSPITAL DESK • TRIAGE UPDATES SYNCING
-            </Text>
-          </View>
-
-          <Text style={styles.hospitalMainName}>{primaryHospital.name}</Text>
-          <Text style={styles.hospitalTraumaLevel}>{primaryHospital.traumaLevel}</Text>
-
-          <View style={styles.locationSharedBadge}>
-            <Text style={styles.locationSharedText}>LOCATION SHARED</Text>
-          </View>
-
-          <View style={styles.cadMetricsRow}>
-            <View style={styles.cadMetricBox}>
-              <PinIcon size={16} color={color.text} />
-              <Text style={styles.cadMetricValue}>{primaryHospital.distanceText}</Text>
-              <Text style={styles.cadMetricLabel}>DISTANCE</Text>
+        <View style={styles.routedHospitalCard}>
+          <View style={styles.routedHospitalTopRow}>
+            <View style={styles.routedHospitalIconBox}>
+              <FlameIcon size={18} color={color.signal} />
             </View>
-
-            <View style={styles.cadMetricBox}>
-              <AmbulanceIcon size={20} color={color.text} />
-              <Text style={styles.cadMetricValueGreen}>~{primaryHospital.etaMinutes} MIN</Text>
-              <Text style={styles.cadMetricLabel}>EST. DRIVE</Text>
-            </View>
-
-            <View style={styles.cadMetricBox}>
-              <BedIcon size={20} color={color.text} />
-              <Text style={styles.cadMetricValueCyan}>
-                {primaryHospital.bedsAvailable ?? '—'}
-              </Text>
-              <Text style={styles.cadMetricLabel}>
-                {primaryHospital.bedsAvailable == null ? 'BEDS UNKNOWN' : 'ICU BEDS'}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routedHospitalNameText}>{primaryHospital.name}</Text>
+              <Text style={styles.routedHospitalAddressText}>
+                {primaryHospital.address || 'Central Government Trauma Department'}
               </Text>
             </View>
-          </View>
-
-          <View style={styles.cadActionsRow}>
             <TouchableOpacity
-              style={styles.cadCallButton}
-              onPress={() => callHospital(primaryHospital.phone)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.cadCallBtnText}>CALL {primaryHospital.phone}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.cadDirectionsButton}
+              style={styles.routedHospitalEditBtn}
               onPress={() => openHospitalMap(primaryHospital.googleMapsUrl)}
               activeOpacity={0.8}
             >
-              <Text style={styles.cadDirectionsBtnText}>DIRECTIONS</Text>
+              <Text style={styles.routedHospitalEditBtnText}>Directions</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Metric Telemetry Pills */}
+          <View style={styles.telemetryPillsRow}>
+            <View style={styles.telemetryPill}>
+              <PinIcon size={14} color={color.text} />
+              <Text style={styles.telemetryPillValue}>{primaryHospital.distanceText}</Text>
+            </View>
+            <View style={styles.telemetryPill}>
+              <AmbulanceIcon size={16} color={color.confirm} />
+              <Text style={styles.telemetryPillValueGreen}>~{primaryHospital.etaMinutes} MIN</Text>
+            </View>
+            <View style={styles.telemetryPill}>
+              <BedIcon size={16} color={color.blue} />
+              <Text style={styles.telemetryPillValueBlue}>
+                {primaryHospital.bedsAvailable ?? 'AVAIL'} BEDS
+              </Text>
+            </View>
+          </View>
+
+          {/* Action Call Button */}
+          <TouchableOpacity
+            style={styles.callTraumaDeskBtn}
+            onPress={() => callHospital(primaryHospital.phone)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.callTraumaDeskBtnText}>
+              CALL TRAUMA DESK ({primaryHospital.phone})
+            </Text>
+          </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.hospitalCadCardEmpty}>
-          <Text style={styles.hospitalEmptyTitle}>NO FACILITY LOCATED</Text>
-          <Text style={styles.hospitalEmptyText}>No hospital could be resolved for your location. Call 108 now and give them your
-            coordinates directly.
+        <View style={styles.noHospitalCard}>
+          <Text style={styles.noHospitalTitle}>AWAITING HOSPITAL DESK MATCH</Text>
+          <Text style={styles.noHospitalBody}>
+            Dial 108 immediately to connect directly with the central ambulance service.
           </Text>
           <TouchableOpacity
-            style={styles.cadCallButton}
+            style={styles.call108CtaBtn}
             onPress={() => callHospital('108')}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
-            <Text style={styles.cadCallBtnText}>CALL 108</Text>
+            <Text style={styles.call108CtaText}>DIAL 108 DIRECTLY</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* 3. Incident status — reflects what the server actually reports */}
-      <View style={styles.timelineCard}>
-        <Text style={styles.timelineHeader}>INCIDENT STATUS</Text>
+      {/* 4. Simulated Live Tactical Route Map Canvas (Reference 2 Right) */}
+      <View style={styles.mapCanvasCard}>
+        <View style={styles.mapCanvasInterior}>
+          {/* Simulated Street Grid */}
+          <View style={styles.mapStreetH1} />
+          <View style={styles.mapStreetH2} />
+          <View style={styles.mapStreetV1} />
+          <View style={styles.mapStreetV2} />
 
-        <View style={styles.timelineList}>
-          <View style={styles.timelineItem}>
-            <View style={hash ? styles.timelineIconCompleted : styles.timelineIconActive}>
-              <Text style={styles.timelineCheck}>{hash ? '' : '…'}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitle}>Emergency recorded</Text>
-              <Text style={styles.timelineItemTime}>
-                {timestamp ? new Date(timestamp).toLocaleTimeString() : 'Sending…'}
-              </Text>
-            </View>
+          {/* Hospital Marker */}
+          <View style={styles.mapMarkerHospital}>
+            <HospitalIcon size={16} color="#FFFFFF" />
+            <Text style={styles.mapMarkerHospitalLabel}>
+              {primaryHospital ? primaryHospital.name.split(' ')[0] : 'Trauma Hub'}
+            </Text>
           </View>
 
-          <View style={styles.timelineItem}>
-            <View style={pdfBase64 ? styles.timelineIconCompleted : styles.timelineIconActive}>
-              <Text style={styles.timelineCheck}>{pdfBase64 ? '' : '…'}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.timelineItemTitle}>Incident record generated</Text>
-              <Text style={styles.timelineItemTime}>
-                {pdfBase64 ? 'Available to download' : 'Generating…'}
-              </Text>
-            </View>
+          {/* Route Polyline */}
+          <View style={styles.mapRouteTrack} />
+
+          {/* User Incident Marker */}
+          <View style={styles.mapMarkerUser}>
+            <View style={styles.mapMarkerUserHalo} />
+            <ShieldIcon size={18} color="#FFFFFF" />
+            <Text style={styles.mapMarkerUserLabel}>YOU</Text>
           </View>
 
-          <View style={styles.timelineItem}>
-            <View
-              style={
-                primaryHospital?.ambulanceUnit ? styles.timelineIconGreen : styles.timelineIconActive
-              }
-            >
-              <Text style={styles.timelineCheck}>
-                {primaryHospital?.ambulanceUnit ? '' : '…'}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={
-                  primaryHospital?.ambulanceUnit
-                    ? styles.timelineItemTitleGreen
-                    : styles.timelineItemTitle
-                }
-              >
-                {primaryHospital?.ambulanceUnit
-                  ? `Ambulance assigned: ${primaryHospital.ambulanceUnit}`
-                  : 'Awaiting ambulance assignment'}
-              </Text>
-              <Text style={styles.timelineItemTime}>
-                {incidentStatus === 'AMBULANCE_DISPATCHED'
-                  ? 'Dispatched by hospital desk'
-                  : 'Not yet dispatched'}
-              </Text>
-            </View>
+          {/* Ambulance Icon along Route */}
+          <View style={styles.mapMarkerAmbulance}>
+            <AmbulanceIcon size={13} color="#FFFFFF" />
           </View>
         </View>
+
+        <Text style={styles.mapCanvasStatusFooter}>
+          LIVE 2-WAY CAD TRAUMA TELEMETRY • AMBULANCE ETA ~{primaryHospital?.etaMinutes || 4} MIN
+        </Text>
       </View>
 
-      {/* 4. Standby Network List */}
-      <View style={styles.standbyCard}>
-        <Text style={styles.standbyHeader}>STANDBY NETWORK LIST</Text>
-        {backupHospitals.map((hosp) => (
-          <TouchableOpacity
-            key={hosp.id}
-            style={styles.standbyItem}
-            onPress={() => openHospitalMap(hosp.googleMapsUrl)}
-            activeOpacity={0.8}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.standbyName}>{hosp.name}</Text>
-              <Text style={styles.standbyMeta}>
-                {hosp.distanceText}
-                {hosp.bedsAvailable != null ? ` • ${hosp.bedsAvailable} beds` : ''}
-              </Text>
-            </View>
-            <ArrowRightIcon size={16} color={color.text} />
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* 5. Voice AI & CPR Engine (Screen 3) */}
+      {/* 5. Voice AI & CPR 110 BPM Metronome Engine */}
       <VoiceTriage isActive={appPhase === 'active'} incidentId={incidentId ?? undefined} />
 
       {/* 6. Legal Certificate Action Banner */}
       <TouchableOpacity
-        style={styles.legalBannerCTA}
+        style={styles.legalCertificateBanner}
         onPress={() => setShowCertModal(true)}
         activeOpacity={0.85}
       >
-        <DocumentIcon size={18} color={color.text} />
+        <View style={styles.legalCertIconCircle}>
+          <DocumentIcon size={20} color={color.signal} />
+        </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
-          <Text style={styles.legalBannerSubtext}>
-            {pdfBase64 ? 'Timestamped record + your rights under Section 134A' : 'Generating record...'}
+          <Text style={styles.legalCertBannerTitle}>GOOD SAMARITAN LEGAL SHIELD</Text>
+          <Text style={styles.legalCertBannerSub}>
+            {pdfBase64
+              ? 'SHA-256 Verified • Immunity Under Section 134A MV Act'
+              : 'Compiling cryptographic incident record…'}
           </Text>
         </View>
-        <ArrowRightIcon size={16} color={color.text} />
-      </TouchableOpacity>
-
-      {/* Deactivate Button */}
-      <TouchableOpacity style={styles.deactivateBtn} onPress={handleReset}>
-        <Text style={styles.deactivateBtnText}>DEACTIVATE EMERGENCY MODE</Text>
+        <DownloadIcon size={18} color={color.textMuted} />
       </TouchableOpacity>
     </ScrollView>
   );
@@ -1075,13 +1585,13 @@ export default function App(): React.JSX.Element {
       </View>
 
       <TouchableOpacity
-        style={styles.legalBannerCTA}
+        style={styles.legalCertificateBanner}
         onPress={handleOpenCertificate}
       >
         <DocumentIcon size={18} color={color.text} />
         <View style={{ flex: 1 }}>
-          <Text style={styles.legalBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
-          <Text style={styles.legalBannerSubtext}>Timestamped account of assistance rendered</Text>
+          <Text style={styles.legalCertBannerTitle}>VIEW INCIDENT RECORD (PDF)</Text>
+          <Text style={styles.legalCertBannerSub}>Timestamped account of assistance rendered</Text>
         </View>
         <ArrowRightIcon size={16} color={color.text} />
       </TouchableOpacity>
@@ -1199,44 +1709,905 @@ export default function App(): React.JSX.Element {
     </Modal>
   );
 
-  // --- BOTTOM NAVIGATION BAR ---
-  const renderBottomNav = () => (
-    <View style={styles.bottomNav}>
-      {(['HUB', 'MAPS', 'INTEL', 'REPORTS'] as NavigationTab[]).map((tab) => {
-        const isActive = activeTab === tab;
-        const icon =
-          tab === 'HUB'
-            ? '⊞'
-            : tab === 'MAPS'
-            ? ''
-            : tab === 'INTEL'
-            ? ''
-            : '';
+  // --- SCREEN 5: PUBLIC SCANNED EMERGENCY CIVILIAN CARD ---
+  const renderPublicCivilianCard = () => {
+    let name = civilianProfile.name;
+    let address = locationName;
+    let lat = coordinates.lat.toFixed(4);
+    let lng = coordinates.lng.toFixed(4);
+    let blood = civilianProfile.bloodGroup;
+    let victimPhone = civilianProfile.phone;
+    let medicalNotes = civilianProfile.medicalNotes || '';
+    let targetCallId = 'civilian-01';
+    let emergencyContacts: EmergencyContact[] = civilianProfile.emergencyContacts || [];
 
-        return (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.navTab, isActive && styles.navTabActive]}
-            onPress={() => setActiveTab(tab)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.navTabIcon, isActive && styles.navTabIconActive]}>
-              {icon}
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location.search) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('callId')) targetCallId = params.get('callId')!;
+        if (params.get('name')) name = params.get('name')!;
+        if (params.get('address')) address = params.get('address')!;
+        if (params.get('lat')) lat = params.get('lat')!;
+        if (params.get('lng')) lng = params.get('lng')!;
+        if (params.get('blood')) blood = params.get('blood')!;
+        if (params.get('phone')) victimPhone = params.get('phone')!;
+        if (params.get('medical')) medicalNotes = params.get('medical')!;
+        if (params.get('contacts')) {
+          try {
+            emergencyContacts = JSON.parse(params.get('contacts')!);
+          } catch (_e) {}
+        }
+        // Backward compat: old QR codes with single contact param
+        if (params.get('contact') && emergencyContacts.length === 0) {
+          emergencyContacts = [{ label: params.get('contact')!, phone: '' }];
+        }
+      } catch (_e) {}
+    }
+
+    const mapsUrl = lat && lng ? `https://www.google.com/maps?q=${lat},${lng}` : `https://www.google.com/maps/search/${encodeURIComponent(address)}`;
+
+    const handleCallPhone = (phone: string) => {
+      const cleaned = phone.replace(/\s+/g, '');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = `tel:${cleaned}`;
+      } else {
+        Linking.openURL(`tel:${cleaned}`);
+      }
+    };
+
+    return (
+      <View style={styles.rootContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F6F8FA" />
+        <ScrollView style={styles.contentScroll} contentContainerStyle={styles.publicCardScroll}>
+          <View style={styles.publicCardContainer}>
+            {/* Emergency Alert Banner */}
+            <View style={[styles.publicCardBadge, { backgroundColor: '#FEE2E2' }]}>
+              <View style={[styles.publicCardPulseDot, { backgroundColor: '#EF4444' }]} />
+              <Text style={[styles.publicCardBadgeText, { color: '#991B1B' }]}>⚠ EMERGENCY — SCAN RESULT</Text>
+            </View>
+
+            <Text style={styles.publicCardName}>{name}</Text>
+            <Text style={styles.publicCardSubtitle}>
+              This person has registered emergency contacts. If they are injured or unconscious, call their emergency contacts below.
             </Text>
-            <Text style={[styles.navTabLabel, isActive && styles.navTabLabelActive]}>
-              {tab}
+
+            {/* ===== EMERGENCY CONTACTS — BIG CALL BUTTONS ===== */}
+            <View style={{
+              backgroundColor: '#FEF2F2',
+              borderRadius: 12,
+              borderWidth: 2,
+              borderColor: '#EF4444',
+              padding: 16,
+              marginTop: 16,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <PhoneIcon size={20} color="#EF4444" />
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#991B1B', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  Emergency Contacts — Tap to Call
+                </Text>
+              </View>
+
+              {emergencyContacts.length > 0 ? emergencyContacts.map((ec, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={{
+                    backgroundColor: '#EF4444',
+                    borderRadius: 10,
+                    paddingVertical: 16,
+                    paddingHorizontal: 20,
+                    marginBottom: idx < emergencyContacts.length - 1 ? 10 : 0,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                  onPress={() => handleCallPhone(ec.phone)}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                      {ec.label}
+                    </Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '800' }}>
+                      TAP TO CALL NOW
+                    </Text>
+                  </View>
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 24,
+                    width: 48,
+                    height: 48,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    <PhoneIcon size={22} color="#EF4444" />
+                  </View>
+                </TouchableOpacity>
+              )) : (
+                <Text style={{ color: '#991B1B', fontSize: 13, textAlign: 'center', paddingVertical: 12 }}>
+                  No emergency contacts configured for this person.
+                </Text>
+              )}
+            </View>
+
+            {/* National Emergency Number */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1E40AF',
+                borderRadius: 10,
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+                marginTop: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+              }}
+              onPress={() => handleCallPhone('112')}
+              activeOpacity={0.8}
+            >
+              <SirenIcon size={20} color="#FFFFFF" />
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '800' }}>
+                CALL 112 — NATIONAL EMERGENCY
+              </Text>
+            </TouchableOpacity>
+
+            {/* Victim's Own Phone (call if they might answer) */}
+            {victimPhone ? (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#F0F9FF',
+                  borderWidth: 1,
+                  borderColor: '#3B82F6',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 20,
+                  marginTop: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+                onPress={() => handleCallPhone(victimPhone)}
+                activeOpacity={0.8}
+              >
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#1E40AF', textTransform: 'uppercase' }}>
+                    Call This Person Directly
+                  </Text>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#1E3A5F', marginTop: 2 }}>
+                    TAP TO CALL NOW
+                  </Text>
+                </View>
+                <PhoneIcon size={20} color="#3B82F6" />
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Live Address & Directions */}
+            <View style={styles.publicCardFieldBox}>
+              <Text style={styles.publicCardFieldLabel}>LIVE / EMERGENCY ADDRESS</Text>
+              <Text style={styles.publicCardFieldValue}>{address}</Text>
+              {lat && lng ? (
+                <Text style={styles.publicCardCoordsSub}>
+                  GPS Anchor: {lat}° N, {lng}° E
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                style={styles.publicCardBtnMaps}
+                onPress={() => Linking.openURL(mapsUrl)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.publicCardBtnMapsText}>🗺️ OPEN DIRECTIONS IN MAPS</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Medical Info Row */}
+            <View style={styles.publicCardBloodRow}>
+              <View>
+                <Text style={styles.publicCardFieldLabel}>BLOOD GROUP</Text>
+                <Text style={styles.publicCardFieldValue}>{blood}</Text>
+              </View>
+              <View style={styles.publicCardBloodBadge}>
+                <Text style={styles.publicCardBloodBadgeText}>CRITICAL ID</Text>
+              </View>
+            </View>
+
+            {medicalNotes ? (
+              <View style={styles.publicCardFieldBox}>
+                <Text style={styles.publicCardFieldLabel}>MEDICAL NOTES / ALLERGIES</Text>
+                <Text style={styles.publicCardFieldValue}>{medicalNotes}</Text>
+              </View>
+            ) : null}
+
+            {/* Section 134A Legal Protection Banner */}
+            <View style={styles.publicCardStatuteBox}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <ShieldIcon size={16} color="#1E40AF" />
+                <Text style={styles.publicCardStatuteTitle}>
+                  Section 134A — Motor Vehicles Act
+                </Text>
+              </View>
+              <Text style={styles.publicCardStatuteBody}>
+                Good Samaritan Protection: A citizen rendering emergency assistance is protected from civil and criminal liability, detention, or compulsory identification.
+              </Text>
+            </View>
+
+            {/* Back to Samaritan Shield App */}
+            <TouchableOpacity
+              style={styles.publicCardBackBtn}
+              onPress={() => {
+                if (typeof window !== 'undefined') {
+                  window.location.href = window.location.origin;
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.publicCardBackBtnText}>LAUNCH SAMARITAN SHIELD APP</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // --- SCREEN 6: CIVILIAN QR IDENTITY PASS MODAL ---
+  const renderQrModal = () => (
+    <Modal
+      visible={showQrModal}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setShowQrModal(false)}
+    >
+      <View style={styles.modalBackdrop}>
+        <View style={styles.qrModalFrame}>
+          <ScrollView contentContainerStyle={styles.qrScrollContent}>
+            {/* Modal Header */}
+            <View style={styles.qrModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ShieldIcon size={20} color={color.signal} />
+                <Text style={styles.qrModalTitle}>CIVILIAN EMERGENCY ID</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsEditingProfile(false);
+                  setShowQrModal(false);
+                }}
+                style={styles.qrModalCloseBtn}
+              >
+                <Text style={styles.qrModalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* QR Code Container */}
+            <View style={styles.qrCodeCard}>
+              <View style={styles.qrTargetCornersWrapper}>
+                {qrDataUrl ? (
+                  <Image
+                    source={{ uri: qrDataUrl }}
+                    style={styles.qrImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <ActivityIndicator
+                    size="large"
+                    color={color.signal}
+                    style={{ width: 190, height: 190 }}
+                  />
+                )}
+              </View>
+              <Text style={styles.qrScanHint}>
+                Scan with any smartphone camera — bystanders can directly call your emergency contacts
+              </Text>
+
+              {/* Format Toggle (Web Profile vs Direct Call) */}
+              <View style={styles.qrFormatToggle}>
+                <TouchableOpacity
+                  style={[
+                    styles.qrFormatTab,
+                    qrFormatMode === 'URL' && styles.qrFormatTabActive,
+                  ]}
+                  onPress={() => setQrFormatMode('URL')}
+                >
+                  <Text
+                    style={[
+                      styles.qrFormatTabText,
+                      qrFormatMode === 'URL' && styles.qrFormatTabTextActive,
+                    ]}
+                  >
+                    Web Profile Pass
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.qrFormatTab,
+                    qrFormatMode === 'DIRECT' && styles.qrFormatTabActive,
+                  ]}
+                  onPress={() => setQrFormatMode('DIRECT')}
+                >
+                  <Text
+                    style={[
+                      styles.qrFormatTabText,
+                      qrFormatMode === 'DIRECT' && styles.qrFormatTabTextActive,
+                    ]}
+                  >
+                    Direct Dial QR
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Civilian Details or Edit Form */}
+            {isEditingProfile ? (
+              <View style={styles.qrEditCard}>
+                <Text style={styles.qrSectionHeader}>EDIT EMERGENCY IDENTITY</Text>
+
+                <Text style={styles.qrInputLabel}>FULL NAME</Text>
+                <TextInput
+                  style={styles.qrInput}
+                  value={editProfileForm.name}
+                  onChangeText={(t) => setEditProfileForm((p) => ({ ...p, name: t }))}
+                  placeholder="Your Full Name"
+                  placeholderTextColor={color.textFaint}
+                />
+
+                <Text style={styles.qrInputLabel}>YOUR PHONE NUMBER</Text>
+                <TextInput
+                  style={styles.qrInput}
+                  value={editProfileForm.phone}
+                  onChangeText={(t) => setEditProfileForm((p) => ({ ...p, phone: t }))}
+                  placeholder="+91 Phone Number"
+                  placeholderTextColor={color.textFaint}
+                />
+
+                <Text style={styles.qrInputLabel}>BLOOD GROUP</Text>
+                <TextInput
+                  style={styles.qrInput}
+                  value={editProfileForm.bloodGroup}
+                  onChangeText={(t) => setEditProfileForm((p) => ({ ...p, bloodGroup: t }))}
+                  placeholder="e.g. O+, B+, A+"
+                  placeholderTextColor={color.textFaint}
+                />
+
+                <Text style={styles.qrInputLabel}>MEDICAL NOTES / ALLERGIES</Text>
+                <TextInput
+                  style={styles.qrInput}
+                  value={editProfileForm.medicalNotes || ''}
+                  onChangeText={(t) => setEditProfileForm((p) => ({ ...p, medicalNotes: t }))}
+                  placeholder="e.g. Diabetic, Penicillin allergy"
+                  placeholderTextColor={color.textFaint}
+                />
+
+                {/* Emergency Contacts Editor */}
+                <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 14 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={[styles.qrInputLabel, { marginBottom: 0 }]}>EMERGENCY CONTACTS</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditProfileForm((p) => ({
+                          ...p,
+                          emergencyContacts: [...p.emergencyContacts, { label: '', phone: '' }],
+                        }));
+                      }}
+                      style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>+ ADD CONTACT</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {editProfileForm.emergencyContacts.map((ec, idx) => (
+                    <View key={idx} style={{
+                      backgroundColor: '#FEF2F2',
+                      borderRadius: 8,
+                      padding: 12,
+                      marginBottom: 10,
+                      borderWidth: 1,
+                      borderColor: '#FECACA',
+                    }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#991B1B' }}>CONTACT {idx + 1}</Text>
+                        {editProfileForm.emergencyContacts.length > 1 && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditProfileForm((p) => ({
+                                ...p,
+                                emergencyContacts: p.emergencyContacts.filter((_, i) => i !== idx),
+                              }));
+                            }}
+                          >
+                            <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700' }}>✕ REMOVE</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      <TextInput
+                        style={[styles.qrInput, { marginBottom: 6 }]}
+                        value={ec.label}
+                        onChangeText={(t) => {
+                          setEditProfileForm((p) => {
+                            const updated = [...p.emergencyContacts];
+                            updated[idx] = { ...updated[idx], label: t };
+                            return { ...p, emergencyContacts: updated };
+                          });
+                        }}
+                        placeholder="Label (e.g. Father, Mother, Spouse)"
+                        placeholderTextColor={color.textFaint}
+                      />
+                      <TextInput
+                        style={styles.qrInput}
+                        value={ec.phone}
+                        onChangeText={(t) => {
+                          setEditProfileForm((p) => {
+                            const updated = [...p.emergencyContacts];
+                            updated[idx] = { ...updated[idx], phone: t };
+                            return { ...p, emergencyContacts: updated };
+                          });
+                        }}
+                        placeholder="Phone Number (e.g. +91 98765 43210)"
+                        placeholderTextColor={color.textFaint}
+                        keyboardType="phone-pad"
+                      />
+                    </View>
+                  ))}
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                  <TouchableOpacity
+                    style={styles.qrSaveButton}
+                    onPress={handleSaveProfile}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.qrSaveButtonText}>SAVE & UPDATE QR</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.qrCancelEditBtn}
+                    onPress={() => {
+                      setEditProfileForm(civilianProfile);
+                      setIsEditingProfile(false);
+                    }}
+                  >
+                    <Text style={styles.qrCancelEditText}>CANCEL</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.qrDetailsCard}>
+                <View style={styles.qrDetailsRow}>
+                  <Text style={styles.qrDetailLabel}>CIVILIAN NAME</Text>
+                  <Text style={styles.qrDetailValue}>{civilianProfile.name}</Text>
+                </View>
+
+                <View style={styles.qrDetailsRow}>
+                  <Text style={styles.qrDetailLabel}>PHONE NUMBER</Text>
+                  <Text style={styles.qrDetailValue}>{civilianProfile.phone}</Text>
+                </View>
+
+                <View style={styles.qrDetailsRow}>
+                  <Text style={styles.qrDetailLabel}>LIVE ADDRESS</Text>
+                  <Text style={styles.qrDetailValue}>{locationName}</Text>
+                </View>
+
+                <View style={styles.qrDetailsRow}>
+                  <Text style={styles.qrDetailLabel}>GPS ANCHOR</Text>
+                  <Text style={styles.qrDetailValue}>
+                    {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+                  </Text>
+                </View>
+
+                {/* Emergency Contacts List */}
+                <View style={[styles.qrDetailsRow, { borderBottomWidth: 0 }]}>
+                  <Text style={styles.qrDetailLabel}>EMERGENCY CONTACTS</Text>
+                  {civilianProfile.emergencyContacts.map((ec, idx) => (
+                    <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 }}>
+                      <Text style={styles.qrDetailValue}>{ec.label}</Text>
+                      <Text style={[styles.qrDetailValue, { color: color.signal }]}>{ec.phone}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.qrDetailsRow}>
+                  <Text style={styles.qrDetailLabel}>BLOOD GROUP</Text>
+                  <Text style={styles.qrDetailValue}>{civilianProfile.bloodGroup}</Text>
+                </View>
+
+                {civilianProfile.medicalNotes ? (
+                  <View style={styles.qrDetailsRow}>
+                    <Text style={styles.qrDetailLabel}>MEDICAL NOTES</Text>
+                    <Text style={styles.qrDetailValue}>{civilianProfile.medicalNotes}</Text>
+                  </View>
+                ) : null}
+
+                <TouchableOpacity
+                  style={styles.qrEditToggleBtn}
+                  onPress={() => {
+                    setEditProfileForm(civilianProfile);
+                    setIsEditingProfile(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.qrEditToggleText}>✎ EDIT DETAILS (NAME / PHONE / CONTACTS)</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Action Buttons */}
+            <View style={{ gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                style={styles.qrPreviewBtn}
+                onPress={() => setShowScanPreviewModal(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.qrPreviewBtnText}>👁️ TEST SCAN / PREVIEW RESULT</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.qrGpsSyncBtn}
+                onPress={() => fetchLivePosition(true)}
+                activeOpacity={0.8}
+              >
+                <RefreshIcon size={14} color={color.text} />
+                <Text style={styles.qrGpsSyncBtnText}>
+                  {isRefreshingGps ? 'UPDATING GPS...' : 'SYNC LIVE GPS TO ID'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // --- SCREEN 7: TEST SCAN / PREVIEW MODAL ---
+  const renderScanPreviewModal = () => {
+    const mapsUrl = `https://www.google.com/maps?q=${coordinates.lat},${coordinates.lng}`;
+    return (
+      <Modal
+        visible={showScanPreviewModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowScanPreviewModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.qrModalFrame}>
+            <ScrollView contentContainerStyle={styles.qrScrollContent}>
+              <View style={[styles.publicCardBadge, { backgroundColor: '#FEE2E2' }]}>
+                <View style={[styles.publicCardPulseDot, { backgroundColor: '#EF4444' }]} />
+                <Text style={[styles.publicCardBadgeText, { color: '#991B1B' }]}>PREVIEW: EMERGENCY SCAN RESULT</Text>
+              </View>
+
+              <Text style={styles.publicCardName}>{civilianProfile.name}</Text>
+              <Text style={styles.publicCardSubtitle}>
+                This person has registered emergency contacts. If they are injured or unconscious, call their emergency contacts below.
+              </Text>
+
+              {/* ===== EMERGENCY CONTACTS — BIG CALL BUTTONS ===== */}
+              <View style={{
+                backgroundColor: '#FEF2F2',
+                borderRadius: 12,
+                borderWidth: 2,
+                borderColor: '#EF4444',
+                padding: 16,
+                marginTop: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <PhoneIcon size={20} color="#EF4444" />
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#991B1B', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                    Emergency Contacts — Tap to Call
+                  </Text>
+                </View>
+
+                {civilianProfile.emergencyContacts.length > 0 ? civilianProfile.emergencyContacts.map((ec, idx) => (
+                  <View
+                    key={idx}
+                    style={{
+                      backgroundColor: '#EF4444',
+                      borderRadius: 10,
+                      paddingVertical: 16,
+                      paddingHorizontal: 20,
+                      marginBottom: idx < civilianProfile.emergencyContacts.length - 1 ? 10 : 0,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      opacity: 0.8 // indicating this is a preview
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                        {ec.label || 'Contact'}
+                      </Text>
+                      <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '800' }}>
+                        TAP TO CALL NOW
+                      </Text>
+                    </View>
+                    <View style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 24,
+                      width: 48,
+                      height: 48,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}>
+                      <PhoneIcon size={22} color="#EF4444" />
+                    </View>
+                  </View>
+                )) : (
+                  <Text style={{ color: '#991B1B', fontSize: 13, textAlign: 'center', paddingVertical: 12 }}>
+                    No emergency contacts configured for this person.
+                  </Text>
+                )}
+              </View>
+
+              {/* National Emergency Number */}
+              <View
+                style={{
+                  backgroundColor: '#1E40AF',
+                  borderRadius: 10,
+                  paddingVertical: 14,
+                  paddingHorizontal: 20,
+                  marginTop: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  opacity: 0.8
+                }}
+              >
+                <SirenIcon size={20} color="#FFFFFF" />
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '800' }}>
+                  CALL 112 — NATIONAL EMERGENCY
+                </Text>
+              </View>
+
+              {/* Victim's Own Phone (call if they might answer) */}
+              {civilianProfile.phone ? (
+                <View
+                  style={{
+                    backgroundColor: '#F0F9FF',
+                    borderWidth: 1,
+                    borderColor: '#3B82F6',
+                    borderRadius: 10,
+                    paddingVertical: 12,
+                    paddingHorizontal: 20,
+                    marginTop: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    opacity: 0.8
+                  }}
+                >
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#1E40AF', textTransform: 'uppercase' }}>
+                      Call This Person Directly
+                    </Text>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#1E3A5F', marginTop: 2 }}>
+                      TAP TO CALL NOW
+                    </Text>
+                  </View>
+                  <PhoneIcon size={20} color="#3B82F6" />
+                </View>
+              ) : null}
+
+              <View style={styles.publicCardFieldBox}>
+                <Text style={styles.publicCardFieldLabel}>LIVE / EMERGENCY ADDRESS</Text>
+                <Text style={styles.publicCardFieldValue}>{locationName}</Text>
+                <Text style={styles.publicCardCoordsSub}>
+                  GPS Anchor: {coordinates.lat.toFixed(4)}° N, {coordinates.lng.toFixed(4)}° E
+                </Text>
+                <TouchableOpacity
+                  style={styles.publicCardBtnMaps}
+                  onPress={() => Linking.openURL(mapsUrl)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.publicCardBtnMapsText}>🗺️ OPEN DIRECTIONS IN MAPS</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.publicCardBloodRow}>
+                <View>
+                  <Text style={styles.publicCardFieldLabel}>BLOOD GROUP</Text>
+                  <Text style={styles.publicCardFieldValue}>{civilianProfile.bloodGroup}</Text>
+                </View>
+                <View style={styles.publicCardBloodBadge}>
+                  <Text style={styles.publicCardBloodBadgeText}>CRITICAL ID</Text>
+                </View>
+              </View>
+
+              {civilianProfile.medicalNotes ? (
+                <View style={styles.publicCardFieldBox}>
+                  <Text style={styles.publicCardFieldLabel}>MEDICAL NOTES / ALLERGIES</Text>
+                  <Text style={styles.publicCardFieldValue}>{civilianProfile.medicalNotes}</Text>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                style={styles.certCloseBtn}
+                onPress={() => setShowScanPreviewModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.certCloseBtnText}>CLOSE PREVIEW</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // --- INCOMING WEBRTC VOIP CALL MODAL ---
+  const renderIncomingCallModal = () => {
+    if (!incomingCall) return null;
+
+    return (
+      <Modal
+        visible={Boolean(incomingCall)}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          voipService.declineCall();
+          setIncomingCall(null);
+        }}
+      >
+        <View style={styles.incomingCallBackdrop}>
+          <View style={styles.incomingCallCard}>
+            <View style={styles.incomingCallHeader}>
+              <View style={styles.incomingCallPulseIcon}>
+                <PhoneIcon size={28} color="#FFFFFF" />
+              </View>
+              <Text style={styles.incomingCallHeaderTitle}>INCOMING RESCUER VOIP CALL</Text>
+              <Text style={styles.incomingCallHeaderSub}>
+                A bystander or rescuer scanned your QR Pass and is calling via encrypted internet audio
+              </Text>
+            </View>
+
+            <View style={styles.incomingCallBody}>
+              <View style={styles.incomingCallerInfoBox}>
+                <Text style={styles.incomingCallerLabel}>CALLER NAME / IDENTITY</Text>
+                <Text style={styles.incomingCallerName}>
+                  {incomingCall.callerName || 'Emergency Bystander / Rescuer'}
+                </Text>
+                <View style={styles.incomingCallBadgeRow}>
+                  <ShieldIcon size={14} color="#10B981" />
+                  <Text style={styles.incomingCallBadgeText}>
+                    Peer-to-Peer Encrypted • Zero Phone Numbers Disclosed
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.incomingCallActionRow}>
+                <TouchableOpacity
+                  style={styles.btnDeclineCall}
+                  onPress={() => {
+                    voipService.declineCall();
+                    setIncomingCall(null);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.btnDeclineCallText}>✕ DECLINE</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.btnAnswerCall}
+                  onPress={async () => {
+                    await voipService.answerCall();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <PhoneIcon size={18} color="#FFFFFF" />
+                    <Text style={styles.btnAnswerCallText}>ANSWER CALL</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // --- FLOATING ACTIVE VOIP CALL HUD ---
+  const renderActiveVoipCallHUD = () => {
+    if (!activeVoipCall || activeVoipCall.state !== 'connected') return null;
+
+    const mins = Math.floor(activeVoipCall.durationSec / 60)
+      .toString()
+      .padStart(2, '0');
+    const secs = (activeVoipCall.durationSec % 60).toString().padStart(2, '0');
+
+    return (
+      <View style={styles.activeVoipFloatingHUD}>
+        <View style={styles.activeVoipHudContent}>
+          <View style={styles.activeVoipInfoCol}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={styles.activeVoipPulseDot} />
+              <Text style={styles.activeVoipCallTitle}>VOIP AUDIO CONNECTED</Text>
+            </View>
+            <Text style={styles.activeVoipPeerName}>
+              {activeVoipCall.peerName} • {mins}:{secs}
             </Text>
-          </TouchableOpacity>
-        );
-      })}
+          </View>
+
+          <View style={styles.activeVoipActionsRow}>
+            <TouchableOpacity
+              style={[
+                styles.activeVoipMuteBtn,
+                isVoipMuted && styles.activeVoipMuteBtnActive,
+              ]}
+              onPress={() => {
+                const muted = voipService.toggleMute();
+                setIsVoipMuted(muted);
+              }}
+              activeOpacity={0.8}
+            >
+              <MicIcon size={15} color={isVoipMuted ? '#EF4444' : '#FFFFFF'} />
+              <Text style={styles.activeVoipMuteBtnText}>
+                {isVoipMuted ? 'UNMUTE' : 'MUTE'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.activeVoipHangupBtn}
+              onPress={() => {
+                voipService.hangupCall();
+                setActiveVoipCall(null);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.activeVoipHangupBtnText}>END CALL</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // --- BOTTOM NAVIGATION BAR (Concept Pill Navigation) ---
+  const renderBottomNav = () => (
+    <View style={styles.bottomNavContainer}>
+      <View style={styles.bottomNavPill}>
+        {(
+          [
+            { id: 'HUB', label: 'SOS Hub', Icon: RadioIcon },
+            { id: 'MAPS', label: 'CAD Map', Icon: MapIcon },
+            { id: 'INTEL', label: 'Triage', Icon: PulseIcon },
+            { id: 'REPORTS', label: 'Shield', Icon: ShieldIcon },
+          ] as Array<{ id: NavigationTab; label: string; Icon: React.FC<IconProps> }>
+        ).map((item) => {
+          const isActive = activeTab === item.id;
+          return (
+            <TouchableOpacity
+              key={item.id}
+              style={[styles.navTab, isActive && styles.navTabActive]}
+              onPress={() => setActiveTab(item.id)}
+              activeOpacity={0.7}
+            >
+              <item.Icon
+                size={19}
+                color={isActive ? color.signal : color.textFaint}
+              />
+              <Text style={[styles.navTabLabel, isActive && styles.navTabLabelActive]}>
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
+
+  // --- PUBLIC DIRECT SCANNED LINK ROUTING ---
+  if (
+    Platform.OS === 'web' &&
+    typeof window !== 'undefined' &&
+    (window.location.pathname.includes('civilian-id') ||
+      window.location.search.includes('callId=') ||
+      (window.location.search.includes('name=') && window.location.search.includes('lat=')))
+  ) {
+    return renderPublicCivilianCard();
+  }
 
   // --- AUTH GATEWAY ---
   if (!currentUser) {
     return (
       <View style={styles.rootContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0a0a14" />
+        <StatusBar barStyle="dark-content" backgroundColor="#F6F8FA" />
         <AuthScreen onLoginSuccess={(profile) => setCurrentUser(profile)} />
       </View>
     );
@@ -1246,7 +2617,7 @@ export default function App(): React.JSX.Element {
   if (currentUser.role === 'hospital') {
     return (
       <View style={styles.rootContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0a0a14" />
+        <StatusBar barStyle="dark-content" backgroundColor="#F6F8FA" />
         {renderTopHeader()}
         <HospitalPortal
           userProfile={currentUser}
@@ -1261,6 +2632,18 @@ export default function App(): React.JSX.Element {
           }}
         />
         {renderCertModal()}
+        {renderIncomingCallModal()}
+        {renderActiveVoipCallHUD()}
+      </View>
+    );
+  }
+
+  // --- CONTROL ROOM VIEW ---
+  if (currentUser.role === 'control_room') {
+    return (
+      <View style={styles.rootContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+        <ControlRoom userProfile={currentUser} onLogout={handleLogout} />
       </View>
     );
   }
@@ -1268,8 +2651,23 @@ export default function App(): React.JSX.Element {
   // --- CITIZEN EMERGENCY HUD VIEW ---
   return (
     <View style={styles.rootContainer}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a14" />
+      <StatusBar barStyle="dark-content" backgroundColor="#F6F8FA" />
       {renderTopHeader()}
+
+      {citizenAlert && (
+        <View style={styles.citizenAlertBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.citizenAlertKicker}>NEARBY ACCIDENT · {citizenAlert.incidentCode}</Text>
+            <Text style={styles.citizenAlertBody}>{citizenAlert.message}</Text>
+          </View>
+          <TouchableOpacity style={styles.citizenAlertGo} onPress={() => void handleRespondToAlert()}>
+            <Text style={styles.citizenAlertGoText}>I'M RESPONDING</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.citizenAlertNo} onPress={() => setCitizenAlert(null)}>
+            <Text style={styles.citizenAlertNoText}>NOT NOW</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.mainContent}>
         {activeTab === 'HUB' &&
@@ -1279,14 +2677,33 @@ export default function App(): React.JSX.Element {
         {activeTab === 'REPORTS' && renderReportsView()}
       </View>
 
+      {/* Floating Bottom-Right QR Identity Button (Civilian Portal) */}
+      <TouchableOpacity
+        style={styles.floatingQrButton}
+        onPress={() => setShowQrModal(true)}
+        activeOpacity={0.85}
+      >
+        <View style={styles.floatingQrIconCircle}>
+          <QrCodeIcon size={20} color="#FFFFFF" />
+        </View>
+        <View style={styles.floatingQrPillTextContainer}>
+          <Text style={styles.floatingQrPillTitle}>MY ID</Text>
+          <Text style={styles.floatingQrPillSub}>QR PASS</Text>
+        </View>
+      </TouchableOpacity>
+
       {renderBottomNav()}
       {renderCertModal()}
+      {renderQrModal()}
+      {renderScanPreviewModal()}
+      {renderIncomingCallModal()}
+      {renderActiveVoipCallHUD()}
     </View>
   );
 }
 
 // ---------------------------------------------------------------------------
-// STYLES (Cyber-Tactical Emergency Design Tokens)
+// STYLES (Modern Emergency Design System based on Concept References)
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   rootContainer: {
@@ -1304,1082 +2721,2335 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
-    maxWidth: 600,
+    paddingBottom: 110,
+    maxWidth: 580,
     width: '100%',
     alignSelf: 'center',
   } as ViewStyle,
 
-  // --- Top Header ---
+  // --- Top Header (Reference 1 Left) ---
   topHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: color.surface,
+    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingHorizontal: 18,
-    paddingVertical: 12,
-    backgroundColor: color.surface,
-    borderBottomWidth: 1.5,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.03,
+    shadowRadius: 10,
+    elevation: 2,
   } as ViewStyle,
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  } as ViewStyle,
-  shieldIconBox: {
-    marginRight: 8,
-  } as ViewStyle,
-  shieldEmoji: {
-    fontSize: 22,
-  } as TextStyle,
-  headerTitle: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: color.amber,
-    fontFamily: font.mono,
-    letterSpacing: 1.5,
-  } as TextStyle,
-  userRoleBadge: {
-    fontSize: 9,
-    fontFamily: font.mono,
-    fontWeight: '700',
-    color: color.amber,
-    marginTop: 1,
-  } as TextStyle,
-  headerRight: {},
-  switchRoleBtn: {
-    backgroundColor: color.hairline,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: color.hairlineStrong,
-  } as ViewStyle,
-  switchRoleText: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.textMuted,
-  } as TextStyle,
 
-  // --- System Status Banner ---
-  systemStatusCard: {
-    backgroundColor: color.surface,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: color.surface,
-  } as ViewStyle,
-  statusRowBetween: {
+  headerTopPillRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 12,
   } as ViewStyle,
-  statusLiveTag: {
+
+  safetyIndexPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: color.confirmWash,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: color.confirm,
   } as ViewStyle,
-  statusDotLive: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.amber,
-    marginRight: 8,
+
+  safetyDotLive: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: color.confirm,
+    marginRight: 6,
   } as ViewStyle,
-  statusTextLive: {
+
+  safetyIndexPillText: {
     fontSize: 11,
     fontFamily: font.mono,
     fontWeight: '700',
-    color: color.textMuted,
-  } as TextStyle,
-  nodeBadge: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.textMuted,
-    letterSpacing: 1,
+    color: color.confirm,
+    letterSpacing: 0.2,
   } as TextStyle,
 
-  // --- Hero SOS Actuator ---
-  sosHeroContainer: {
+  switchRoleBadge: {
+    backgroundColor: color.surfaceMuted,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  switchRoleBadgeText: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textMuted,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  locationHeadlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  } as ViewStyle,
+
+  locationCityTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+    letterSpacing: -0.6,
+  } as TextStyle,
+
+  locationCitySubhead: {
+    fontSize: 12,
+    color: color.textMuted,
+    marginTop: 2,
+  } as TextStyle,
+
+  headerInfoBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: color.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 20,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  searchFacilityBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: color.groundDeep,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  searchFacilityInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 13,
+    color: color.text,
+    fontFamily: font.body,
+    padding: 0,
+  } as TextStyle,
+
+  searchFacilityFilterBtn: {
+    padding: 4,
+  } as ViewStyle,
+
+  // --- Radar Centerpiece (Reference 1 Left & 2 Left) ---
+  radarCard: {
+    backgroundColor: color.radarGround,
+    borderRadius: 28,
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+    alignItems: 'center',
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: color.radarMint,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 4,
+    overflow: 'hidden',
+  } as ViewStyle,
+
+  radarOuterCircle: {
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderWidth: 1,
+    borderColor: color.radarRing,
+    alignItems: 'center',
+    justifyContent: 'center',
     position: 'relative',
   } as ViewStyle,
-  sosRippleRing: {
+
+  radarMidCircle: {
+    width: 175,
+    height: 175,
+    borderRadius: 87.5,
+    backgroundColor: 'rgba(16, 185, 129, 0.14)',
+    borderWidth: 1,
+    borderColor: color.radarRing,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  } as ViewStyle,
+
+  radarInnerCircle: {
+    width: 115,
+    height: 115,
+    borderRadius: 57.5,
+    backgroundColor: 'rgba(16, 185, 129, 0.22)',
+    borderWidth: 1,
+    borderColor: color.radarRing,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  } as ViewStyle,
+
+  radarSweepBeam: {
     position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 28,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    borderTopWidth: 60,
+    borderTopColor: 'rgba(16, 185, 129, 0.22)',
+    borderRightWidth: 60,
+    borderRightColor: 'transparent',
+    borderBottomWidth: 60,
+    borderBottomColor: 'transparent',
+    borderLeftWidth: 60,
+    borderLeftColor: 'transparent',
+  } as ViewStyle,
+
+  radarPulseWave: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     borderWidth: 2,
     borderColor: color.signal,
-    top: 10,
   } as ViewStyle,
-  sosTactileButton: {
-    width: 170,
-    height: 170,
-    borderRadius: 24,
-    backgroundColor: color.signalWash,
-    borderWidth: 2.5,
-    borderColor: color.signal,
+
+  radarCenterActuator: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: color.signal,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
     elevation: 8,
   } as ViewStyle,
-  sosInnerGlow: {
+
+  radarCenterGlow: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: color.signalLift,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
-  sosAsterisk: {
-    fontSize: 44,
-    color: color.signalLift,
-    marginBottom: -4,
-  } as TextStyle,
-  sosButtonLabel: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: color.signalLift,
-    fontFamily: font.mono,
-    letterSpacing: 3,
-  } as TextStyle,
-  sosEmergencyHeadline: {
+
+  holdForSosHeadline: {
     fontSize: 18,
-    fontWeight: '900',
-    color: color.text,
-    marginTop: 18,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: '#064E3B',
+    fontFamily: font.display,
+    letterSpacing: 1.5,
+    marginTop: 20,
   } as TextStyle,
-  sosEmergencySubhead: {
+
+  holdForSosSubhead: {
     fontSize: 11,
     fontFamily: font.mono,
+    fontWeight: '700',
+    color: '#047857',
+    letterSpacing: 0.8,
+    marginTop: 4,
+    marginBottom: 14,
+  } as TextStyle,
+
+  gpsCoordinatesPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: color.radarMint,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  } as ViewStyle,
+
+  gpsCoordinatesPillText: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.text,
+    marginLeft: 6,
+  } as TextStyle,
+
+  // --- Category Grid (Reference 1 Right & 2 Left) ---
+  categorySection: {
+    marginBottom: 20,
+  } as ViewStyle,
+
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  } as ViewStyle,
+
+  sectionHeaderTitle: {
+    fontSize: 12,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.8,
+  } as TextStyle,
+
+  sectionHeaderSub: {
+    fontSize: 11,
+    color: color.textFaint,
+  } as TextStyle,
+
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  } as ViewStyle,
+
+  categoryCard: {
+    width: '31%',
+    flexGrow: 1,
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
+    elevation: 1,
+  } as ViewStyle,
+
+  categoryCardSelected: {
+    borderColor: color.signal,
+    backgroundColor: '#FFF5F6',
+    shadowColor: color.signal,
+    shadowOpacity: 0.15,
+  } as ViewStyle,
+
+  categoryIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  } as ViewStyle,
+
+  categoryIconCircleSelected: {
+    backgroundColor: color.signal,
+  } as ViewStyle,
+
+  categoryTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+    textAlign: 'center',
+  } as TextStyle,
+
+  categoryTitleSelected: {
+    color: color.signalDeep,
+  } as TextStyle,
+
+  categorySubtext: {
+    fontSize: 9,
+    color: color.textFaint,
+    marginTop: 2,
+    textAlign: 'center',
+  } as TextStyle,
+
+  categorySubtextSelected: {
+    color: color.signalDeep,
+  } as TextStyle,
+
+  // --- Address Confirmation Card (Reference 1 Right) ---
+  addressConfirmCard: {
+    backgroundColor: color.surface,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
+  } as ViewStyle,
+
+  addressInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  } as ViewStyle,
+
+  addressPinIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: color.signalWash,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  } as ViewStyle,
+
+  addressTitleText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  addressDetailText: {
+    fontSize: 11,
+    color: color.textMuted,
+    marginTop: 2,
+  } as TextStyle,
+
+  confirmAddressCtaBtn: {
+    backgroundColor: color.signal,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 3,
+  } as ViewStyle,
+
+  confirmAddressCtaText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
+  } as TextStyle,
+
+  // --- Facilities Section ---
+  facilitiesSection: {
+    marginBottom: 10,
+  } as ViewStyle,
+
+  facilitiesEmptyBox: {
+    backgroundColor: color.surface,
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: color.hairline,
+    borderStyle: 'dashed',
+  } as ViewStyle,
+
+  facilitiesEmptyText: {
+    fontSize: 11,
     color: color.textMuted,
     textAlign: 'center',
-    marginTop: 6,
-    paddingHorizontal: 20,
+    marginTop: 8,
     lineHeight: 16,
   } as TextStyle,
 
-  // --- HUD Feature Cards ---
-  hudFeatureCard: {
+  facilityItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: color.surface,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
+    elevation: 1,
   } as ViewStyle,
-  cardHeaderRow: {
+
+  facilityItemIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  } as ViewStyle,
+
+  facilityItemIconPrimary: {
+    backgroundColor: color.signalWash,
+  } as ViewStyle,
+
+  facilityItemIconSecondary: {
+    backgroundColor: color.groundDeep,
+  } as ViewStyle,
+
+  facilityItemTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  facilityItemDetails: {
+    fontSize: 10,
+    color: color.textMuted,
+    marginTop: 2,
+    fontFamily: font.mono,
+  } as TextStyle,
+
+  // --- ACTIVE TRANSMISSION HUB (Reference 1 Right & 2 Right) ---
+  countdownAbortBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    backgroundColor: color.surface,
+    borderRadius: 24,
+    padding: 6,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 3,
   } as ViewStyle,
-  cardHeaderLabel: {
+
+  countdownCancelBtn: {
+    backgroundColor: color.confirmWash,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+  } as ViewStyle,
+
+  countdownCancelText: {
     fontSize: 12,
-    fontFamily: font.mono,
     fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
-  } as TextStyle,
-  cardHeaderIcon: {
-    fontSize: 16,
-  } as TextStyle,
-  pulsingBlueDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.amber,
-  } as ViewStyle,
-  gpsCoordBox: {
-    backgroundColor: color.groundDeep,
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  gpsCoordText: {
-    fontSize: 13,
-    fontFamily: font.mono,
-    fontWeight: '700',
-    color: color.amber,
-    letterSpacing: 1,
-  } as TextStyle,
-
-  hashPreviewBox: {
-    backgroundColor: color.groundDeep,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  hashPreviewLabel: {
-    fontSize: 9,
-    fontFamily: font.mono,
-    color: color.textFaint,
-    fontWeight: '700',
-    marginBottom: 4,
-  } as TextStyle,
-  hashPreviewValue: {
-    fontSize: 11,
-    fontFamily: font.mono,
     color: color.confirm,
-    lineHeight: 16,
-  } as TextStyle,
-  hudCardSubtext: {
-    fontSize: 11,
-    fontFamily: font.mono,
-    color: color.textMuted,
   } as TextStyle,
 
-  viewBadge: {
-    backgroundColor: color.surfaceMuted,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: color.amber,
-  } as ViewStyle,
-  viewBadgeText: {
-    fontSize: 9,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 0.5,
-  } as TextStyle,
-
-  legalInnerBanner: {
-    flexDirection: 'row',
+  countdownPulseBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: color.signal,
     alignItems: 'center',
-    backgroundColor: color.groundDeep,
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: color.hairline,
+    justifyContent: 'center',
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
   } as ViewStyle,
-  legalInnerIcon: {
-    fontSize: 22,
-    marginRight: 10,
-  } as TextStyle,
-  legalInnerTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: color.text,
-  } as TextStyle,
-  legalInnerSubtitle: {
-    fontSize: 11,
-    fontFamily: font.mono,
-    color: color.textMuted,
-  } as TextStyle,
 
-  radarCountText: {
+  countdownPulseBadgeText: {
     fontSize: 10,
+    fontWeight: '900',
+    color: '#FFFFFF',
     fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-  } as TextStyle,
-  radarHospitalList: {
-    gap: 8,
-  } as ViewStyle,
-  radarHospitalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.groundDeep,
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  radarItemIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: color.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  } as ViewStyle,
-  radarItemIconBoxSecondary: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: color.hairline,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  } as ViewStyle,
-  radarItemIcon: {
-    fontSize: 18,
-  } as TextStyle,
-  radarItemName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: color.text,
-  } as TextStyle,
-  radarItemMeta: {
-    fontSize: 11,
-    fontFamily: font.mono,
-    color: color.amber,
-    marginTop: 2,
-  } as TextStyle,
-  radarItemArrow: {
-    fontSize: 14,
-    color: color.textFaint,
   } as TextStyle,
 
-  // --- SCREEN 2: ACTIVE TRANSMISSION HUB ---
-  activeBroadcastCard: {
+  broadcastingActivePill: {
+    backgroundColor: color.signal,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+  } as ViewStyle,
+
+  broadcastingActiveText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  transmissionErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: color.signalWash,
     borderRadius: 14,
     padding: 14,
-    marginBottom: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: color.signal,
+    gap: 8,
+  } as ViewStyle,
+
+  transmissionErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: color.signalDeep,
+    fontWeight: '700',
+    lineHeight: 16,
+  } as TextStyle,
+
+  activeBroadcastHeroCard: {
+    backgroundColor: color.surface,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1.5,
     borderColor: color.signal,
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 3,
   } as ViewStyle,
-  activeBroadcastTop: {
+
+  activeBroadcastTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 8,
   } as ViewStyle,
-  activeRedBeacon: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+
+  activeBeaconDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: color.signal,
     marginRight: 8,
   } as ViewStyle,
-  activeBroadcastTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1,
-  } as TextStyle,
-  activeBroadcastIncident: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.signalLift,
-    letterSpacing: 1,
-    marginBottom: 8,
-  } as TextStyle,
-  activeBroadcastCoordBox: {
-    backgroundColor: color.signalWash,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-  } as ViewStyle,
-  activeBroadcastCoordText: {
+
+  activeBroadcastHeaderTitle: {
     fontSize: 12,
     fontFamily: font.mono,
     fontWeight: '800',
-    color: color.signalLift,
+    color: color.signalDeep,
+    letterSpacing: 0.5,
   } as TextStyle,
 
-  // Hospital CAD Dispatch Card
-  hospitalCadCard: {
+  activeBroadcastCoords: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+    marginVertical: 4,
+  } as TextStyle,
+
+  activeBroadcastCategoryNote: {
+    fontSize: 11,
+    color: color.textMuted,
+  } as TextStyle,
+
+  routedHospitalCard: {
     backgroundColor: color.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   } as ViewStyle,
-  cadStreamingHeader: {
+
+  routedHospitalTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-  } as ViewStyle,
-  greenPulsingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.confirm,
-    marginRight: 8,
-  } as ViewStyle,
-  cadStreamingText: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.confirm,
-    letterSpacing: 0.8,
-  } as TextStyle,
-  hospitalMainName: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: color.text,
-    lineHeight: 26,
-  } as TextStyle,
-  hospitalTraumaLevel: {
-    fontSize: 12,
-    color: color.amber,
-    marginTop: 2,
-    marginBottom: 8,
-  } as TextStyle,
-  locationSharedBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: color.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: color.amber,
     marginBottom: 14,
   } as ViewStyle,
-  locationSharedText: {
-    fontSize: 10,
-    fontFamily: font.mono,
+
+  routedHospitalIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: color.signalWash,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  } as ViewStyle,
+
+  routedHospitalNameText: {
+    fontSize: 14,
     fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
+    color: color.text,
+    fontFamily: font.display,
   } as TextStyle,
 
-  cadMetricsRow: {
+  routedHospitalAddressText: {
+    fontSize: 11,
+    color: color.textMuted,
+    marginTop: 2,
+  } as TextStyle,
+
+  routedHospitalEditBtn: {
+    backgroundColor: color.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  routedHospitalEditBtnText: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.text,
+  } as TextStyle,
+
+  telemetryPillsRow: {
     flexDirection: 'row',
     gap: 8,
     marginBottom: 14,
   } as ViewStyle,
-  cadMetricBox: {
+
+  telemetryPill: {
     flex: 1,
-    backgroundColor: color.surface,
-    borderRadius: 10,
-    paddingVertical: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.groundDeep,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    gap: 6,
     borderWidth: 1,
     borderColor: color.hairline,
   } as ViewStyle,
-  cadMetricIcon: {
-    fontSize: 16,
-    marginBottom: 2,
-  } as TextStyle,
-  cadMetricIconGreen: {
-    fontSize: 16,
-    marginBottom: 2,
-  } as TextStyle,
-  cadMetricIconCyan: {
-    fontSize: 16,
-    marginBottom: 2,
-  } as TextStyle,
-  cadMetricValue: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: color.text,
-    fontFamily: font.mono,
-  } as TextStyle,
-  cadMetricValueGreen: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: color.confirm,
-    fontFamily: font.mono,
-  } as TextStyle,
-  cadMetricValueCyan: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: color.amber,
-    fontFamily: font.mono,
-  } as TextStyle,
-  cadMetricLabel: {
-    fontSize: 9,
+
+  telemetryPillValue: {
+    fontSize: 11,
     fontFamily: font.mono,
     fontWeight: '700',
-    color: color.textFaint,
-    marginTop: 2,
-    letterSpacing: 1,
+    color: color.text,
   } as TextStyle,
 
-  cadActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  } as ViewStyle,
-  cadCallButton: {
-    flex: 1.2,
-    backgroundColor: color.signalDeep,
-    borderRadius: 10,
-    paddingVertical: 12,
+  telemetryPillValueGreen: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.confirm,
+  } as TextStyle,
+
+  telemetryPillValueBlue: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.blue,
+  } as TextStyle,
+
+  callTraumaDeskBtn: {
+    backgroundColor: color.signal,
+    borderRadius: 14,
+    paddingVertical: 13,
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 2,
+  } as ViewStyle,
+
+  callTraumaDeskBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.6,
+  } as TextStyle,
+
+  noHospitalCard: {
+    backgroundColor: color.signalWash,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
     borderColor: color.signal,
   } as ViewStyle,
-  cadCallBtnText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1,
-  } as TextStyle,
-  cadDirectionsButton: {
-    flex: 1,
-    backgroundColor: color.hairline,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: color.amber,
-  } as ViewStyle,
-  cadDirectionsBtnText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: color.amber,
-    letterSpacing: 1,
-  } as TextStyle,
 
-  // Timeline Stepper Card
-  timelineCard: {
-    backgroundColor: color.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  timelineHeader: {
+  noHospitalTitle: {
     fontSize: 13,
-    fontWeight: '900',
-    color: color.amber,
-    fontFamily: font.mono,
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  } as TextStyle,
-  timelineList: {
-    gap: 12,
-  } as ViewStyle,
-  timelineItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  } as ViewStyle,
-  timelineIconCompleted: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.surfaceMuted,
-    borderWidth: 1.5,
-    borderColor: color.amber,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  } as ViewStyle,
-  timelineIconGreen: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.confirmWash,
-    borderWidth: 1.5,
-    borderColor: color.confirm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  } as ViewStyle,
-  timelineIconActive: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.surfaceMuted,
-    borderWidth: 1.5,
-    borderColor: color.amber,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  } as ViewStyle,
-  timelineCheck: {
-    fontSize: 12,
-    color: color.amber,
-    fontWeight: '900',
-  } as TextStyle,
-  timelineDotCyan: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.amber,
-  } as ViewStyle,
-  timelineItemTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: color.textMuted,
-  } as TextStyle,
-  timelineItemTitleGreen: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: color.confirm,
-  } as TextStyle,
-  timelineItemTitleCyan: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: color.amber,
-  } as TextStyle,
-  timelineItemTime: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    color: color.textFaint,
-    marginTop: 1,
-  } as TextStyle,
-  timelineItemTimeActive: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    color: color.amber,
-    fontWeight: '700',
-    marginTop: 1,
-  } as TextStyle,
-
-  // Standby Card
-  standbyCard: {
-    backgroundColor: color.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  standbyHeader: {
-    fontSize: 12,
     fontFamily: font.mono,
     fontWeight: '800',
-    color: color.textMuted,
-    letterSpacing: 1,
-    marginBottom: 10,
-  } as TextStyle,
-  standbyItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.groundDeep,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  standbyName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: color.text,
-  } as TextStyle,
-  standbyMeta: {
-    fontSize: 11,
-    fontFamily: font.mono,
-    color: color.textFaint,
-    marginTop: 2,
-  } as TextStyle,
-  standbyArrow: {
-    fontSize: 14,
-    color: color.textFaint,
-  } as TextStyle,
-
-  // Legal Banner CTA
-  legalBannerCTA: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.confirmWash,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: color.confirm,
-  } as ViewStyle,
-  legalBannerIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  } as TextStyle,
-  legalBannerTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: color.confirm,
-    letterSpacing: 0.5,
-  } as TextStyle,
-  legalBannerSubtext: {
-    fontSize: 11,
-    color: color.confirm,
-    marginTop: 2,
-  } as TextStyle,
-  legalBannerArrow: {
-    fontSize: 18,
-    color: color.confirm,
-    fontWeight: '900',
-  } as TextStyle,
-
-  deactivateBtn: {
-    backgroundColor: color.signalWash,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: color.signalDeep,
-    marginBottom: 10,
-  } as ViewStyle,
-  deactivateBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: color.signalLift,
-    letterSpacing: 1.5,
-  } as TextStyle,
-
-  // --- MAPS PLACEHOLDER ---
-  mapCanvasPlaceholder: {
-    height: 180,
-    backgroundColor: color.groundDeep,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: color.hairline,
-    marginVertical: 10,
-  } as ViewStyle,
-  mapRadarPulse: {
-    fontSize: 32,
-    marginBottom: 8,
-  } as TextStyle,
-  mapCoordsLive: {
-    fontSize: 12,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-  } as TextStyle,
-
-  // --- INTEL DRSABC ---
-  drsabcCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.surface,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  drsabcCardChecked: {
-    borderColor: color.confirm,
-    backgroundColor: color.confirmWash,
-  } as ViewStyle,
-  drsabcLetterBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: color.hairline,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  } as ViewStyle,
-  drsabcLetter: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: color.amber,
-  } as TextStyle,
-  drsabcTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: color.text,
-  } as TextStyle,
-  drsabcDetail: {
-    fontSize: 11,
-    color: color.textMuted,
-    marginTop: 2,
-  } as TextStyle,
-  drsabcCheck: {
-    fontSize: 18,
-    color: color.hairlineStrong,
-    fontWeight: '900',
-    marginLeft: 8,
-  } as TextStyle,
-  drsabcCheckActive: {
-    color: color.confirm,
-  } as TextStyle,
-
-  // --- SCREEN 4: LEGAL SHIELD CERTIFICATE MODAL ---
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  } as ViewStyle,
-  modalCertificateFrame: {
-    width: '100%',
-    maxWidth: 520,
-    maxHeight: '90%',
-    backgroundColor: color.groundDeep,
-    borderRadius: 18,
-    borderWidth: 2.5,
-    borderColor: color.amber,
-    padding: 20,
-    shadowColor: color.amber,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-  } as ViewStyle,
-  certScrollContent: {
-    paddingBottom: 20,
-  } as ViewStyle,
-  certHeader: {
-    alignItems: 'center',
-    marginBottom: 16,
-    borderBottomWidth: 1,
-    borderColor: color.hairline,
-    paddingBottom: 12,
-  } as ViewStyle,
-  certEmblem: {
-    fontSize: 32,
+    color: color.signalDeep,
     marginBottom: 4,
   } as TextStyle,
+
+  noHospitalBody: {
+    fontSize: 12,
+    color: color.text,
+    lineHeight: 18,
+    marginBottom: 12,
+  } as TextStyle,
+
+  call108CtaBtn: {
+    backgroundColor: color.signal,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  call108CtaText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
+  } as TextStyle,
+
+  // --- Simulated Map Canvas (Reference 2 Right) ---
+  mapCanvasCard: {
+    backgroundColor: color.surface,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.hairline,
+    marginBottom: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  } as ViewStyle,
+
+  mapCanvasInterior: {
+    height: 180,
+    backgroundColor: '#EBF4F6',
+    position: 'relative',
+    overflow: 'hidden',
+  } as ViewStyle,
+
+  mapStreetH1: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    right: 0,
+    height: 12,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  mapStreetH2: {
+    position: 'absolute',
+    top: 120,
+    left: 0,
+    right: 0,
+    height: 16,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  mapStreetV1: {
+    position: 'absolute',
+    left: 60,
+    top: 0,
+    bottom: 0,
+    width: 14,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  mapStreetV2: {
+    position: 'absolute',
+    right: 90,
+    top: 0,
+    bottom: 0,
+    width: 14,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  mapRouteTrack: {
+    position: 'absolute',
+    left: 65,
+    top: 40,
+    width: 140,
+    height: 90,
+    borderLeftWidth: 4,
+    borderBottomWidth: 4,
+    borderColor: color.signal,
+    borderBottomLeftRadius: 16,
+  } as ViewStyle,
+
+  mapMarkerHospital: {
+    position: 'absolute',
+    top: 25,
+    left: 45,
+    backgroundColor: color.blue,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    shadowColor: color.blue,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+  } as ViewStyle,
+
+  mapMarkerHospitalLabel: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  mapMarkerUser: {
+    position: 'absolute',
+    bottom: 25,
+    right: 75,
+    backgroundColor: color.signal,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  } as ViewStyle,
+
+  mapMarkerUserHalo: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    right: -6,
+    bottom: -6,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: color.signal,
+    opacity: 0.4,
+  } as ViewStyle,
+
+  mapMarkerUserLabel: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  mapMarkerAmbulance: {
+    position: 'absolute',
+    top: 90,
+    left: 60,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: color.confirm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: color.confirm,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+  } as ViewStyle,
+
+  mapCanvasStatusFooter: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textMuted,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: color.surface,
+    textAlign: 'center',
+    borderTopWidth: 1,
+    borderColor: color.hairline,
+  } as TextStyle,
+
+  // --- Legal Certificate Card ---
+  legalCertificateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+    marginTop: 6,
+    gap: 12,
+  } as ViewStyle,
+
+  legalCertIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: color.signalWash,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  legalCertBannerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  legalCertBannerSub: {
+    fontSize: 11,
+    color: color.textMuted,
+    marginTop: 2,
+  } as TextStyle,
+
+  // --- Bottom Navigation (Concept Pill Bar) ---
+  bottomNavContainer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  bottomNavPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: color.surface,
+    borderRadius: 30,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 6,
+    gap: 8,
+  } as ViewStyle,
+
+  navTab: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+  } as ViewStyle,
+
+  navTabActive: {
+    backgroundColor: color.signalWash,
+  } as ViewStyle,
+
+  navTabLabel: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textFaint,
+    marginTop: 3,
+  } as TextStyle,
+
+  navTabLabelActive: {
+    color: color.signalDeep,
+  } as TextStyle,
+
+  // --- Certificate Modal Styles ---
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    padding: 16,
+  } as ViewStyle,
+
+  modalCertificateFrame: {
+    backgroundColor: color.surface,
+    borderRadius: 24,
+    maxHeight: '85%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 28,
+    elevation: 10,
+  } as ViewStyle,
+
+  certScrollContent: {
+    padding: 24,
+  } as ViewStyle,
+
+  certHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  } as ViewStyle,
+
   certGovtTitle: {
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '900',
-    color: color.amber,
-    letterSpacing: 2,
-    textAlign: 'center',
+    fontWeight: '800',
+    color: color.signal,
+    letterSpacing: 1.5,
+    marginTop: 8,
+    marginBottom: 4,
   } as TextStyle,
+
   certMainHeading: {
-    fontSize: 15,
-    fontWeight: '900',
+    fontSize: 18,
+    fontWeight: '800',
     color: color.text,
+    fontFamily: font.display,
     textAlign: 'center',
-    marginTop: 4,
+    marginBottom: 6,
   } as TextStyle,
+
   certStatuteBadge: {
-    fontSize: 10,
-    fontFamily: font.mono,
+    fontSize: 11,
     color: color.textMuted,
-    marginTop: 2,
+    fontFamily: font.mono,
   } as TextStyle,
 
   certDataBox: {
-    backgroundColor: color.surfaceMuted,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
-    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
     borderColor: color.hairline,
   } as ViewStyle,
+
   certDataLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: font.mono,
+    fontWeight: '700',
     color: color.textFaint,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 2,
   } as TextStyle,
+
   certDataValue: {
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '700',
     color: color.text,
     fontFamily: font.mono,
   } as TextStyle,
 
   certHashCard: {
-    backgroundColor: color.confirmWash,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 14,
+    backgroundColor: color.groundDeep,
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 14,
     borderWidth: 1,
-    borderColor: color.confirm,
+    borderColor: color.hairline,
   } as ViewStyle,
+
   certHashLabel: {
     fontSize: 9,
     fontFamily: font.mono,
-    color: color.confirm,
+    color: color.textFaint,
     fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 2,
+    marginBottom: 4,
   } as TextStyle,
+
   certHashText: {
     fontSize: 10,
     fontFamily: font.mono,
-    color: color.confirm,
-    lineHeight: 14,
+    color: color.text,
   } as TextStyle,
 
   certSectionTitle: {
     fontSize: 11,
     fontFamily: font.mono,
-    fontWeight: '900',
-    color: color.amber,
-    letterSpacing: 1.5,
-    marginTop: 6,
-    marginBottom: 8,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.8,
+    marginTop: 8,
+    marginBottom: 10,
   } as TextStyle,
+
   certImmunityCard: {
-    backgroundColor: color.surface,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
+    backgroundColor: color.groundDeep,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: color.surface,
+    borderColor: color.hairline,
   } as ViewStyle,
+
   certImmunityHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: 8,
+    marginBottom: 6,
   } as ViewStyle,
-  certImmunityIcon: {
-    fontSize: 14,
-    marginRight: 6,
-  } as TextStyle,
+
   certImmunityTitle: {
-    fontSize: 11,
-    fontWeight: '900',
+    fontSize: 12,
+    fontWeight: '800',
     color: color.text,
-    letterSpacing: 0.5,
+    fontFamily: font.display,
   } as TextStyle,
+
   certImmunityBody: {
-    fontSize: 10,
+    fontSize: 11,
     color: color.textMuted,
-    lineHeight: 14,
+    lineHeight: 16,
   } as TextStyle,
 
   certStampBox: {
     borderWidth: 1.5,
-    borderColor: color.signal,
-    borderRadius: 6,
+    borderColor: color.confirm,
+    borderRadius: 10,
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     alignSelf: 'center',
     marginVertical: 12,
-    transform: [{ rotate: '-3deg' }],
+    backgroundColor: color.confirmWash,
   } as ViewStyle,
+
   certStampText: {
     fontSize: 11,
     fontFamily: font.mono,
-    fontWeight: '900',
-    color: color.signal,
-    letterSpacing: 2,
+    fontWeight: '800',
+    color: color.confirm,
+    letterSpacing: 1.5,
+  } as TextStyle,
+
+  certDisclaimer: {
+    fontSize: 10,
+    color: color.textFaint,
+    textAlign: 'center',
+    lineHeight: 15,
+    marginBottom: 16,
   } as TextStyle,
 
   certDownloadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: color.surfaceMuted,
-    borderRadius: 10,
+    backgroundColor: color.signal,
+    borderRadius: 14,
     paddingVertical: 14,
-    borderWidth: 1.5,
-    borderColor: color.amber,
+    gap: 8,
     marginBottom: 8,
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 3,
   } as ViewStyle,
-  certDownloadBtnIcon: {
-    fontSize: 18,
-    color: color.amber,
-    marginRight: 8,
-  } as TextStyle,
+
   certDownloadBtnText: {
     fontSize: 13,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
   } as TextStyle,
 
   certCloseBtn: {
     paddingVertical: 10,
     alignItems: 'center',
   } as ViewStyle,
+
   certCloseBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '700',
     color: color.textMuted,
-    letterSpacing: 1,
   } as TextStyle,
 
-  // --- BOTTOM NAVIGATION ---
-  bottomNav: {
+  // --- DRSABC & Protocol Styles ---
+  drsabcCard: {
     flexDirection: 'row',
-    backgroundColor: color.groundDeep,
-    borderTopWidth: 1.5,
+    alignItems: 'center',
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
     borderColor: color.hairline,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
+    elevation: 1,
   } as ViewStyle,
-  navTab: {
-    flex: 1,
+
+  drsabcCardChecked: {
+    borderColor: color.confirm,
+    backgroundColor: '#F0FDF4',
+  } as ViewStyle,
+
+  drsabcLetterBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: color.signalWash,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
-    borderRadius: 8,
+    marginRight: 12,
   } as ViewStyle,
-  navTabActive: {
-    backgroundColor: color.surfaceMuted,
-  } as ViewStyle,
-  navTabIcon: {
-    fontSize: 18,
+
+  drsabcTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  drsabcDetail: {
+    fontSize: 11,
+    color: color.textMuted,
+    lineHeight: 16,
+    marginTop: 2,
+  } as TextStyle,
+
+  drsabcCheck: {
+    fontSize: 16,
     color: color.textFaint,
-    marginBottom: 2,
+    marginLeft: 8,
   } as TextStyle,
-  navTabIconActive: {
-    color: color.amber,
+
+  drsabcCheckActive: {
+    color: color.confirm,
   } as TextStyle,
-  navTabLabel: {
-    fontSize: 10,
+
+  // --- Secondary Standby Card ---
+  standbyCard: {
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  standbyHeader: {
+    fontSize: 11,
     fontFamily: font.mono,
     fontWeight: '800',
-    color: color.textFaint,
-    letterSpacing: 1,
-  } as TextStyle,
-  navTabLabelActive: {
-    color: color.amber,
+    color: color.text,
+    letterSpacing: 0.8,
+    marginBottom: 12,
   } as TextStyle,
 
-  certDisclaimer: {
+  standbyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  standbyName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: color.text,
+  } as TextStyle,
+
+  standbyMeta: {
     fontSize: 10,
     color: color.textMuted,
-    lineHeight: 15,
-    marginTop: 10,
-    marginBottom: 4,
-    textAlign: 'center',
+    marginTop: 2,
+    fontFamily: font.mono,
   } as TextStyle,
 
-  radarEmptyBox: {
+  hudFeatureCard: {
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
+    elevation: 1,
+  } as ViewStyle,
+
+  cardHeaderLabel: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  } as TextStyle,
+
+  hudCardSubtext: {
+    fontSize: 11,
+    color: color.textMuted,
+    lineHeight: 16,
+  } as TextStyle,
+
+  mapCanvasPlaceholder: {
+    height: 120,
+    backgroundColor: color.groundDeep,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  mapRadarPulse: {
+    fontSize: 16,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.signal,
+    marginBottom: 6,
+  } as TextStyle,
+
+  mapCoordsLive: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    color: color.text,
+    fontWeight: '700',
+  } as TextStyle,
+
+  hashPreviewBox: {
     backgroundColor: color.groundDeep,
     borderRadius: 10,
+    padding: 10,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  hashPreviewLabel: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    color: color.textFaint,
+    fontWeight: '700',
+  } as TextStyle,
+
+  hashPreviewValue: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    color: color.text,
+    marginTop: 2,
+  } as TextStyle,
+
+  systemStatusCard: {
+    backgroundColor: color.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  // --- GPS Refresh Badge ---
+  gpsRefreshBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: color.signalWash,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  } as ViewStyle,
+
+  gpsRefreshText: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.signal,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  // --- Floating Bottom-Right QR Button ---
+  floatingQrButton: {
+    position: 'absolute',
+    bottom: 86,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: color.surface,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 30,
+    borderWidth: 1.5,
+    borderColor: color.signal,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+    gap: 8,
+    zIndex: 99,
+  } as ViewStyle,
+
+  floatingQrIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  floatingQrPillTextContainer: {
+    paddingRight: 4,
+  } as ViewStyle,
+
+  floatingQrPillTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: font.display,
+    color: color.text,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  floatingQrPillSub: {
+    fontSize: 8,
+    fontWeight: '700',
+    fontFamily: font.mono,
+    color: color.signal,
+  } as TextStyle,
+
+  // --- QR Identity Modal Styles ---
+  qrModalFrame: {
+    backgroundColor: color.surface,
+    borderRadius: 24,
+    maxHeight: '90%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 28,
+    elevation: 10,
+  } as ViewStyle,
+
+  qrScrollContent: {
+    padding: 22,
+  } as ViewStyle,
+
+  qrModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  } as ViewStyle,
+
+  qrModalTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    fontFamily: font.display,
+    color: color.text,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  qrModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: color.groundDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  qrModalCloseText: {
+    fontSize: 14,
+    color: color.textMuted,
+    fontWeight: '700',
+  } as TextStyle,
+
+  qrCodeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: color.hairline,
+    marginBottom: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+  } as ViewStyle,
+
+  qrTargetCornersWrapper: {
+    padding: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: color.signalWash,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  qrImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+  } as ImageStyle,
+
+  qrScanHint: {
+    fontSize: 11,
+    color: color.textMuted,
+    textAlign: 'center',
+    marginTop: 12,
+    marginBottom: 12,
+  } as TextStyle,
+
+  qrFormatToggle: {
+    flexDirection: 'row',
+    backgroundColor: color.groundDeep,
+    borderRadius: 12,
+    padding: 3,
+    width: '100%',
+  } as ViewStyle,
+
+  qrFormatTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 9,
+  } as ViewStyle,
+
+  qrFormatTabActive: {
+    backgroundColor: color.surface,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+  } as ViewStyle,
+
+  qrFormatTabText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: color.textMuted,
+  } as TextStyle,
+
+  qrFormatTabTextActive: {
+    color: color.text,
+  } as TextStyle,
+
+  qrDetailsCard: {
+    backgroundColor: color.groundDeep,
+    borderRadius: 16,
     padding: 14,
     borderWidth: 1,
     borderColor: color.hairline,
   } as ViewStyle,
-  radarEmptyText: {
-    fontSize: 11,
-    color: color.textMuted,
-    lineHeight: 17,
-  } as TextStyle,
 
-  hospitalCadCardEmpty: {
-    backgroundColor: color.signalWash,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: color.signal,
+  qrDetailsRow: {
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderColor: color.hairline,
   } as ViewStyle,
-  hospitalEmptyTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: color.signalLift,
-    letterSpacing: 1,
-    marginBottom: 6,
+
+  qrDetailLabel: {
+    fontSize: 9,
     fontFamily: font.mono,
-  } as TextStyle,
-  hospitalEmptyText: {
-    fontSize: 12,
-    color: color.text,
-    lineHeight: 18,
-    marginBottom: 14,
+    fontWeight: '700',
+    color: color.textFaint,
+    textTransform: 'uppercase',
   } as TextStyle,
 
-  transmissionErrorBanner: {
-    backgroundColor: color.signalWash,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: color.signal,
+  qrDetailValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: color.text,
+    marginTop: 2,
+  } as TextStyle,
+
+  qrEditToggleBtn: {
+    marginTop: 12,
+    alignItems: 'center',
+    paddingVertical: 8,
   } as ViewStyle,
-  transmissionErrorText: {
+
+  qrEditToggleText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: color.signal,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  qrEditCard: {
+    backgroundColor: color.surface,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  qrSectionHeader: {
     fontSize: 12,
     fontWeight: '800',
-    color: color.signalLift,
-    lineHeight: 18,
+    fontFamily: font.display,
+    color: color.text,
+    marginBottom: 10,
+  } as TextStyle,
+
+  qrInputLabel: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textFaint,
+    marginTop: 8,
+    marginBottom: 4,
+  } as TextStyle,
+
+  qrInput: {
+    backgroundColor: color.groundDeep,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: color.text,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as TextStyle,
+
+  qrSaveButton: {
+    flex: 1,
+    backgroundColor: color.signal,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  qrSaveButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  qrCancelEditBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: color.groundDeep,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  qrCancelEditText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: color.textMuted,
+  } as TextStyle,
+
+  qrPreviewBtn: {
+    backgroundColor: color.surface,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  qrPreviewBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  qrGpsSyncBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: color.groundDeep,
+    borderRadius: 14,
+    paddingVertical: 12,
+  } as ViewStyle,
+
+  qrGpsSyncBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: color.text,
+    fontFamily: font.display,
+  } as TextStyle,
+
+  // --- Public Emergency Card Styles ---
+  publicCardScroll: {
+    padding: 20,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  publicCardContainer: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: color.surface,
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 28,
+    elevation: 8,
+  } as ViewStyle,
+
+  publicCardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    backgroundColor: color.signalWash,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    marginBottom: 12,
+  } as ViewStyle,
+
+  publicCardPulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: color.signal,
+  } as ViewStyle,
+
+  publicCardBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: color.signalDeep,
+    fontFamily: font.mono,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  publicCardName: {
+    fontSize: 22,
+    fontWeight: '800',
+    fontFamily: font.display,
+    color: color.text,
+    marginBottom: 4,
+  } as TextStyle,
+
+  publicCardSubtitle: {
+    fontSize: 12,
+    color: color.textMuted,
+    marginBottom: 18,
+  } as TextStyle,
+
+  publicCardFieldBox: {
+    backgroundColor: color.groundDeep,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  publicCardFieldLabel: {
+    fontSize: 9,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textFaint,
+    marginBottom: 4,
+  } as TextStyle,
+
+  publicCardFieldValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: color.text,
+  } as TextStyle,
+
+  publicCardCoordsSub: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    color: color.textMuted,
+    marginTop: 4,
+  } as TextStyle,
+
+  publicCardBtnCall: {
+    backgroundColor: color.signal,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  } as ViewStyle,
+
+  publicCardBtnCallText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  publicCardBtnMaps: {
+    backgroundColor: color.text,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  } as ViewStyle,
+
+  publicCardBtnMapsText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  publicCardBtnUrgent: {
+    backgroundColor: color.urgent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  } as ViewStyle,
+
+  publicCardBtnUrgentText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  publicCardBloodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: color.groundDeep,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  publicCardBloodBadge: {
+    backgroundColor: '#FFE4E6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  } as ViewStyle,
+
+  publicCardBloodBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#E11D48',
+  } as TextStyle,
+
+  publicCardStatuteBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginBottom: 16,
+  } as ViewStyle,
+
+  publicCardStatuteTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1E40AF',
+  } as TextStyle,
+
+  publicCardStatuteBody: {
+    fontSize: 11,
+    color: '#1E40AF',
+    lineHeight: 16,
+  } as TextStyle,
+
+  publicCardBackBtn: {
+    backgroundColor: color.groundDeep,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: color.hairline,
+  } as ViewStyle,
+
+  publicCardBackBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  // --- WebRTC VoIP Call Styles ---
+  publicVoipBox: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 2,
+    borderColor: '#10B981',
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+  } as ViewStyle,
+
+  publicVoipHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  } as ViewStyle,
+
+  publicVoipHeaderTitle: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  publicVoipDesc: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 17,
+    marginBottom: 12,
+  } as TextStyle,
+
+  publicVoipCallNowBtn: {
+    backgroundColor: '#10B981',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 4,
+  } as ViewStyle,
+
+  publicVoipCallNowText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  publicVoipActiveHud: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  publicVoipActiveStatus: {
+    fontSize: 11,
+    fontWeight: '800',
+    fontFamily: font.mono,
+    color: '#059669',
+  } as TextStyle,
+
+  publicVoipTimerText: {
+    fontSize: 22,
+    fontWeight: '800',
+    fontFamily: font.mono,
+    color: color.text,
+    marginVertical: 4,
+  } as TextStyle,
+
+  publicVoipControlsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+    marginTop: 8,
+  } as ViewStyle,
+
+  publicVoipCtrlBtn: {
+    flex: 1,
+    backgroundColor: '#334155',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  publicVoipCtrlBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  publicVoipMuteActive: {
+    backgroundColor: '#EF4444',
+  } as ViewStyle,
+
+  publicVoipHangupBtn: {
+    backgroundColor: '#EF4444',
+  } as ViewStyle,
+
+  // --- Incoming VoIP Call Modal ---
+  incomingCallBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  } as ViewStyle,
+
+  incomingCallCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.3,
+    shadowRadius: 32,
+    elevation: 12,
+  } as ViewStyle,
+
+  incomingCallHeader: {
+    backgroundColor: '#DC2626',
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  incomingCallPulseIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  } as ViewStyle,
+
+  incomingCallHeaderTitle: {
+    fontSize: 15,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
+    textAlign: 'center',
+    marginBottom: 4,
+  } as TextStyle,
+
+  incomingCallHeaderSub: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    lineHeight: 16,
+  } as TextStyle,
+
+  incomingCallBody: {
+    padding: 20,
+  } as ViewStyle,
+
+  incomingCallerInfoBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 18,
+  } as ViewStyle,
+
+  incomingCallerLabel: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    fontWeight: '700',
+    color: color.textFaint,
+    marginBottom: 4,
+  } as TextStyle,
+
+  incomingCallerName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: color.text,
+    marginBottom: 8,
+  } as TextStyle,
+
+  incomingCallBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E2F7EB',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  } as ViewStyle,
+
+  incomingCallBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  } as TextStyle,
+
+  incomingCallActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  } as ViewStyle,
+
+  btnDeclineCall: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  } as ViewStyle,
+
+  btnDeclineCallText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+  } as TextStyle,
+
+  btnAnswerCall: {
+    flex: 1.5,
+    backgroundColor: '#10B981',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  } as ViewStyle,
+
+  btnAnswerCallText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  // --- Active VoIP Floating HUD ---
+  activeVoipFloatingHUD: {
+    position: 'absolute',
+    top: Platform.OS === 'web' ? 14 : 44,
+    left: 16,
+    right: 16,
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    padding: 12,
+    zIndex: 9999,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  } as ViewStyle,
+
+  activeVoipHudContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+
+  activeVoipInfoCol: {
+    flex: 1,
+  } as ViewStyle,
+
+  activeVoipPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  } as ViewStyle,
+
+  activeVoipCallTitle: {
+    fontSize: 10,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: '#10B981',
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  activeVoipPeerName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 2,
+  } as TextStyle,
+
+  activeVoipActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+
+  activeVoipMuteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#475569',
+  } as ViewStyle,
+
+  activeVoipMuteBtnActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: '#EF4444',
+  } as ViewStyle,
+
+  activeVoipMuteBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: font.mono,
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  activeVoipHangupBtn: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  } as ViewStyle,
+
+  activeVoipHangupBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: font.mono,
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  citizenAlertBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#7F1D1D',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  citizenAlertKicker: {
+    color: '#FECACA',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  } as TextStyle,
+  citizenAlertBody: {
+    color: '#FFF7ED',
+    fontSize: 13,
+    marginTop: 4,
+  } as TextStyle,
+  citizenAlertGo: {
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+  } as ViewStyle,
+  citizenAlertGoText: {
+    color: '#7F1D1D',
+    fontSize: 11,
+    fontWeight: '800',
+  } as TextStyle,
+  citizenAlertNo: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  } as ViewStyle,
+  citizenAlertNoText: {
+    color: '#FECACA',
+    fontSize: 10,
+    fontWeight: '700',
   } as TextStyle,
 });

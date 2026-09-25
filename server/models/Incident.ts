@@ -9,6 +9,7 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 // ---------------------------------------------------------------------------
 export type IncidentStatus = 'REPORTED' | 'AMBULANCE_DISPATCHED' | 'ICU_RESERVED' | 'RESOLVED';
 export type VictimCondition = 'CRITICAL_UNCONSCIOUS' | 'CPR_ACTIVE' | 'AIRWAY_OBSTRUCTED' | 'RECOVERY_POSITION' | 'BLEEDING_TRAUMA' | 'BLEEDING_CONTROLLED';
+export type IncidentSource = 'CITIZEN_SOS' | 'CCTV_AI';
 
 /** A Good Samaritan's certificate record for an incident. */
 export interface ICertificateRecord {
@@ -33,6 +34,10 @@ export interface IIncident extends Document {
   assignedHospitalId?: string;
   assignedHospitalName?: string;
   phone?: string;
+  source: IncidentSource;
+  detectedByCameraId?: string;
+  aiConfidence?: number;
+  snapshotBase64?: string;
   /**
    * One record per responder. Each Good Samaritan who reports this incident
    * gets their own certificate, so the digest printed on a certificate can be
@@ -130,6 +135,25 @@ const IncidentSchema = new Schema<IIncident>(
     phone: {
       type: String,
       default: '+91-98765-43210',
+    },
+
+    source: {
+      type: String,
+      enum: ['CITIZEN_SOS', 'CCTV_AI'],
+      default: 'CITIZEN_SOS',
+    },
+
+    detectedByCameraId: {
+      type: String,
+      trim: true,
+    },
+
+    aiConfidence: {
+      type: Number,
+    },
+
+    snapshotBase64: {
+      type: String,
     },
 
     certificates: {

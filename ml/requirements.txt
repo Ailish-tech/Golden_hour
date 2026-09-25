@@ -1,0 +1,34 @@
+# ============================================================================
+# SAMARITAN SHIELD — ML service dependencies
+#
+# Python 3.11. Not 3.12+, and emphatically not 3.14: ultralytics and its torch
+# dependency do not publish wheels for it yet, and a source build of torch on
+# macOS is a multi-hour detour with no payoff.
+#
+#   /opt/homebrew/bin/python3.11 -m venv .venv
+#   . .venv/bin/activate && pip install -r requirements.txt
+# ============================================================================
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# headless, not opencv-python: this process must never try to open a GUI
+# window. The reference implementation calls cv2.imshow on a worker thread,
+# which is exactly the crash we are avoiding.
+opencv-python-headless==4.10.0.84
+
+ultralytics==8.3.55
+
+# ByteTrack's assignment step. Ultralytics does not declare it but auto-installs
+# it at first use, which fails on an offline machine and prints a "restart the
+# runtime" warning mid-run. Pinning it here keeps startup deterministic.
+lap==0.5.13
+
+# <2 because several ultralytics and tensorflow code paths still assume the
+# 1.x ABI. Do not let pip resolve this upward.
+numpy==1.26.4
+
+httpx==0.28.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1

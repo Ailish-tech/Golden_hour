@@ -58,8 +58,9 @@ its matching opt-in.
 
 | Role | Email | Password |
 |---|---|---|
-| Citizen (responder) | anything — `demo@test.com` | anything, 6+ characters |
-| Hospital desk | `hospital@local.test` | anything, 6+ characters |
+| Citizen (responder) | any new email, or Google | your password (6+ characters) |
+| Hospital desk | `hospital@local.test` | `password123` |
+| Control room | `control@local.test` | `password123` |
 
 The hospital address is the one thing that matters: the server resolves that
 role from an allowlist the script seeds, so any other email signs in as a

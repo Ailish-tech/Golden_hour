@@ -199,3 +199,103 @@ export const WarningIcon: React.FC<IconProps> = (p) => (
     <Path d="M12 10v4.2M12 17.2v.1" />
   </Base>
 );
+
+export const SearchIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Circle cx="11" cy="11" r="7" />
+    <Path d="m20 20-4.35-4.35" />
+  </Base>
+);
+
+export const FilterIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M4 6h16M7 12h10M10 18h4" />
+  </Base>
+);
+
+export const MicIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+    <Path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8" />
+  </Base>
+);
+
+export const BellIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+    <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
+  </Base>
+);
+
+export const SirenIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M6 18h12M7 18v-5a5 5 0 0 1 10 0v5M12 3v3M4 6l2.5 2M20 6l-2.5 2" />
+  </Base>
+);
+
+export const FlameIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M8.5 14.5A4.5 4.5 0 0 0 13 19a4.5 4.5 0 0 0 4.5-4.5c0-4-3.5-6-4.5-9.5-1 3.5-4.5 5.5-4.5 9.5Z" />
+  </Base>
+);
+
+export const CarCrashIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M4 14h11l3-4H6l-2 4ZM6 18h2M14 18h2" />
+    <Path d="M18 10l3-3M21 11l2-1" />
+  </Base>
+);
+
+export const RadioIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Circle cx="12" cy="12" r="2" />
+    <Path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49" />
+    <Path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14" />
+  </Base>
+);
+
+export const CompassIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Circle cx="12" cy="12" r="9" />
+    <Path d="m14.5 9.5-5 2 2 5 3-7Z" />
+  </Base>
+);
+
+export const CommunityIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Circle cx="8" cy="9" r="3" />
+    <Circle cx="16" cy="9" r="3" />
+    <Path d="M4 19a4 4 0 0 1 8 0M12 19a4 4 0 0 1 8 0" />
+  </Base>
+);
+
+export const ShareIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Circle cx="18" cy="5" r="3" />
+    <Circle cx="6" cy="12" r="3" />
+    <Circle cx="18" cy="19" r="3" />
+    <Path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98" />
+  </Base>
+);
+
+export const QrCodeIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <Rect x="5.5" y="5.5" width="2" height="2" />
+    <Rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <Rect x="16.5" y="5.5" width="2" height="2" />
+    <Rect x="3" y="14" width="7" height="7" rx="1.5" />
+    <Rect x="5.5" y="16.5" width="2" height="2" />
+    <Path d="M14 14h3v3h-3zM18 14h3v2h-3zM14 18h3v3h-3zM18 18h3v3h-3z" />
+  </Base>
+);
+
+export const RefreshIcon: React.FC<IconProps> = (p) => (
+  <Base {...p}>
+    <Path d="M21 2v6h-6" />
+    <Path d="M3 12a9 9 0 0 1 15.5-6.36L21 8" />
+    <Path d="M3 22v-6h6" />
+    <Path d="M21 12a9 9 0 0 1-15.5 6.36L3 16" />
+  </Base>
+);
+

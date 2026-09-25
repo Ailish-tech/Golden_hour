@@ -15,6 +15,7 @@ import 'dotenv/config';
 import mongoose from 'mongoose';
 import HospitalStaff from '../models/HospitalStaff';
 import User from '../models/User';
+import { ensureFirebaseLogin } from './demoLogins';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -33,6 +34,21 @@ async function main(): Promise<void> {
 
   const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/samaritan-shield';
   await mongoose.connect(uri);
+
+  // run.command passes --if-empty so a second launch does not rewrite a live
+  // allowlist. Omit the flag to force an upsert.
+  if (process.argv.includes('--if-empty')) {
+    const existing = await HospitalStaff.countDocuments();
+    if (existing > 0) {
+      console.log(`SKIPPED: hospital_staff already has ${existing} record(s)`);
+      const firebase = await ensureFirebaseLogin(email, hospitalName);
+      if (firebase === 'created' || firebase === 'updated') {
+        console.log(`✅  Firebase login ready for ${email}`);
+      }
+      await mongoose.connection.close();
+      return;
+    }
+  }
 
   await HospitalStaff.findOneAndUpdate(
     { email },
@@ -54,6 +70,11 @@ async function main(): Promise<void> {
       ? '✅  Existing account promoted to hospital role.'
       : 'ℹ️   No account yet — the role applies on their first login.'
   );
+
+  const firebase = await ensureFirebaseLogin(email, hospitalName);
+  if (firebase === 'created' || firebase === 'updated') {
+    console.log(`✅  Firebase login ready for ${email}`);
+  }
 
   await mongoose.connection.close();
 }

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Model weights and footage are large binaries, not source.
+models/*.keras
+models/*.meta.json
+*.pt
+data/videos/*.mp4
+data/videos/*.avi
+data/videos/*.mov

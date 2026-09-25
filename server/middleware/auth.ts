@@ -161,3 +161,22 @@ export async function requireHospital(req: Request, res: Response, next: NextFun
     }
   });
 }
+
+/**
+ * Requires an authenticated caller whose stored role is 'control_room'.
+ */
+export async function requireControlRoom(req: Request, res: Response, next: NextFunction): Promise<void> {
+  await requireAuth(req, res, async () => {
+    try {
+      const user = await User.findOne({ firebaseUid: req.user!.uid }).lean();
+      if (!user || user.role !== 'control_room') {
+        res.status(403).json({ status: 'error', message: 'Control room access required.' });
+        return;
+      }
+      next();
+    } catch (err) {
+      console.error('❌ Role lookup failed:', err);
+      res.status(500).json({ status: 'error', message: 'Authorization check failed.' });
+    }
+  });
+}

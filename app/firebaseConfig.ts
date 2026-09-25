@@ -25,7 +25,7 @@ import { authedJson } from './api';
 import { AUTH_MODE, FIREBASE_ENV, MISSING_FIREBASE_VARS } from './config';
 import { setDevSession, devUidForEmail } from './session';
 
-export type UserRole = 'citizen' | 'hospital';
+export type UserRole = 'citizen' | 'hospital' | 'control_room';
 
 export interface AppUserProfile {
   uid: string;
@@ -34,6 +34,7 @@ export interface AppUserProfile {
   role: UserRole;
   hospitalId?: string;
   hospitalName?: string;
+  zone?: string;
   lat?: number;
   lng?: number;
 }
@@ -82,6 +83,12 @@ function describeAuthError(err: unknown): string {
       return 'Password must be at least 6 characters.';
     case 'auth/invalid-email':
       return 'Invalid email address format.';
+    case 'auth/operation-not-allowed':
+      return 'This sign-in method is not enabled for the Firebase project. Enable Email/Password and Google in Firebase Authentication → Sign-in method.';
+    case 'auth/unauthorized-domain':
+      return 'This site is not an authorized domain for the Firebase project.';
+    case 'auth/popup-blocked':
+      return 'The browser blocked the Google Sign-In popup. Allow popups and try again.';
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request':
       return 'Google Sign-In was cancelled.';
@@ -104,6 +111,7 @@ interface SyncResponse {
     role: UserRole;
     hospitalId?: string;
     hospitalName?: string;
+    zone?: string;
   };
 }
 
@@ -127,6 +135,7 @@ export async function syncUserToBackend(
     role: data.user.role,
     hospitalId: data.user.hospitalId,
     hospitalName: data.user.hospitalName,
+    zone: data.user.zone,
     lat: coords?.lat,
     lng: coords?.lng,
   };

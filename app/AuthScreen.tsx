@@ -21,11 +21,12 @@ import {
 } from 'react-native';
 import { color, font } from './theme';
 import {
+  GridIcon,
   HospitalIcon,
   ShieldIcon,
   WarningIcon,
 } from './icons';
-import { AUTH_MODE } from './config';
+import { AUTH_MODE, DEMO_CONTROL_EMAIL, DEMO_HOSPITAL_EMAIL, DEMO_STAFF_PASSWORD } from './config';
 import {
   loginWithEmail,
   registerWithEmail,
@@ -85,7 +86,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           'grant it before you can view the live incident feed. Signing you in as a citizen responder.'
       );
     }
+    if (selectedRole === 'control_room' && profile.role !== 'control_room') {
+      setErrorMsg(
+        'This account is not on the control-room allowlist. Sign in with the seeded ' +
+          `desk email (${DEMO_CONTROL_EMAIL}) or ask an administrator to grant access.`
+      );
+    }
     onLoginSuccess(profile);
+  };
+
+  const selectRole = (role: UserRole) => {
+    setSelectedRole(role);
+    setErrorMsg('');
+    setIsSignUp(false);
+    if (role === 'hospital') {
+      setEmail(DEMO_HOSPITAL_EMAIL);
+      if (AUTH_MODE === 'firebase') setPassword(DEMO_STAFF_PASSWORD);
+    } else if (role === 'control_room') {
+      setEmail(DEMO_CONTROL_EMAIL);
+      if (AUTH_MODE === 'firebase') setPassword(DEMO_STAFF_PASSWORD);
+    }
   };
 
   const runAuth = async (action: () =>Promise<AppUserProfile>) => {
@@ -156,18 +176,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
       {/* Role Selector Tabs */}
       <View style={styles.roleCard}>
-        <Text style={styles.roleCardTitle}>SELECT YOUR ACCESS PORTAL</Text>
+        <Text style={styles.roleCardTitle}>SELECT ACCESS PORTAL</Text>
         <View style={styles.roleTabsRow}>
           {/* Citizen Tab */}
           <TouchableOpacity
             style={[styles.roleTab, selectedRole === 'citizen' && styles.roleTabActiveCitizen]}
-            onPress={() => {
-              setSelectedRole('citizen');
-              setErrorMsg('');
-            }}
+            onPress={() => selectRole('citizen')}
             activeOpacity={0.8}
           >
-            <WarningIcon size={20} color={color.text} />
+            <ShieldIcon size={20} color={selectedRole === 'citizen' ? color.signal : color.textMuted} />
             <Text
               style={[
                 styles.roleTabText,
@@ -181,13 +198,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           {/* Hospital Dispatcher Tab */}
           <TouchableOpacity
             style={[styles.roleTab, selectedRole === 'hospital' && styles.roleTabActiveHospital]}
-            onPress={() => {
-              setSelectedRole('hospital');
-              setErrorMsg('');
-            }}
+            onPress={() => selectRole('hospital')}
             activeOpacity={0.8}
           >
-            <HospitalIcon size={20} color={color.text} />
+            <HospitalIcon size={20} color={selectedRole === 'hospital' ? color.blue : color.textMuted} />
             <Text
               style={[
                 styles.roleTabText,
@@ -196,6 +210,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             >HOSPITAL CAD
             </Text>
             <Text style={styles.roleTabSub}>Trauma Dispatch</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.roleTab, selectedRole === 'control_room' && styles.roleTabActiveControl]}
+            onPress={() => selectRole('control_room')}
+            activeOpacity={0.8}
+          >
+            <GridIcon size={20} color={selectedRole === 'control_room' ? color.purple : color.textMuted} />
+            <Text
+              style={[
+                styles.roleTabText,
+                selectedRole === 'control_room' && styles.roleTabTextActiveControl,
+              ]}
+            >CONTROL
+            </Text>
+            <Text style={styles.roleTabSub}>CCTV / Corridor</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -206,26 +236,49 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           <Text style={styles.fieldLabel}>HOSPITAL CAD ACCESS</Text>
           <Text style={styles.hospitalAutoNote}>Access to the live incident feed is granted by an administrator against your
             hospital's staff allowlist, and your desk is bound to that hospital. Sign in with
-            the account that was allowlisted — there is nothing to select here.</Text>
+            the seeded desk account — there is nothing to select here.
+          </Text>
+          <Text style={styles.hospitalDemoNote}>
+            {DEMO_HOSPITAL_EMAIL}{'\n'}
+            Password: {AUTH_MODE === 'firebase' ? DEMO_STAFF_PASSWORD : 'any 6+ characters'}
+          </Text>
+        </View>
+      )}
+
+      {selectedRole === 'control_room' && (
+        <View style={styles.controlPickerCard}>
+          <Text style={styles.controlFieldLabel}>CONTROL ROOM ACCESS</Text>
+          <Text style={styles.hospitalAutoNote}>
+            Cameras, live detections and the green corridor are bound to the
+            control-room allowlist. Sign in with the seeded desk account.
+          </Text>
+          <Text style={styles.hospitalDemoNote}>
+            {DEMO_CONTROL_EMAIL}{'\n'}
+            Password: {AUTH_MODE === 'firebase' ? DEMO_STAFF_PASSWORD : 'any 6+ characters'}
+          </Text>
         </View>
       )}
 
       {/* Credentials Input Card */}
       <View style={styles.authCard}>
         <Text style={styles.authCardTitle}>
-          {isSignUp ? 'CREATE ENCRYPTED ACCOUNT' : 'AUTHENTICATE ACCESS'}
+          {isSignUp ? 'CREATE CITIZEN ACCOUNT' : 'AUTHENTICATE ACCESS'}
         </Text>
 
         {errorMsg ? (
           <View style={styles.errorBanner}>
-            <Text style={styles.errorText}> {errorMsg}</Text>
+            <Text style={styles.errorText}>{errorMsg}</Text>
           </View>
         ) : null}
 
         {/* Email Field */}
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>
-            {selectedRole === 'hospital' ? 'OFFICIAL HOSPITAL / GOVT EMAIL' : 'EMAIL ADDRESS'}
+            {selectedRole === 'hospital'
+              ? 'OFFICIAL HOSPITAL / GOVT EMAIL'
+              : selectedRole === 'control_room'
+                ? 'CONTROL ROOM EMAIL'
+                : 'EMAIL ADDRESS'}
           </Text>
           <TextInput
             style={styles.textInput}
@@ -233,10 +286,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             onChangeText={setEmail}
             placeholder={
               selectedRole === 'hospital'
-                ? 'trauma.cad@hospital.org'
-                : 'responder@example.com'
+                ? DEMO_HOSPITAL_EMAIL
+                : selectedRole === 'control_room'
+                  ? DEMO_CONTROL_EMAIL
+                  : 'responder@example.com'
             }
-            placeholderTextColor="#475569"
+            placeholderTextColor="#94A3B8"
             keyboardType="email-address"
             autoCapitalize="none"
           />
@@ -250,7 +305,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             value={password}
             onChangeText={setPassword}
             placeholder="••••••••••••"
-            placeholderTextColor="#475569"
+            placeholderTextColor="#94A3B8"
             secureTextEntry
           />
         </View>
@@ -259,17 +314,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         <TouchableOpacity
           style={[
             styles.submitBtn,
-            selectedRole === 'hospital' ? styles.submitBtnHospital : styles.submitBtnCitizen,
+            selectedRole === 'hospital'
+              ? styles.submitBtnHospital
+              : selectedRole === 'control_room'
+                ? styles.submitBtnControl
+                : styles.submitBtnCitizen,
           ]}
           onPress={handleSubmit}
           disabled={loading}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
           {loading ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
             <Text style={styles.submitBtnText}>
-              {isSignUp ? 'CREATE ACCOUNT & ENTER' : 'SIGN IN SECURELY '}
+              {isSignUp ? 'CREATE ACCOUNT & ENTER' : 'SIGN IN SECURELY'}
             </Text>
           )}
         </TouchableOpacity>
@@ -280,7 +339,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             style={styles.googleBtn}
             onPress={handleGoogleLogin}
             disabled={loading}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
             <Text style={styles.googleBtnText}>SIGN IN WITH GOOGLE</Text>
           </TouchableOpacity>
@@ -296,12 +355,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         >
           <Text style={styles.toggleAuthText}>
             {isSignUp
-              ? 'Already have credentials? Sign In'
-              : "Don't have an account yet? Sign Up"}
+              ? 'Already registered? Sign In'
+              : "Don't have an account? Sign Up"}
           </Text>
         </TouchableOpacity>
       </View>
-
     </ScrollView>
   );
 };
@@ -314,80 +372,83 @@ const styles = StyleSheet.create({
     backgroundColor: color.ground,
   } as ViewStyle,
   scrollContent: {
-    padding: 20,
-    paddingBottom: 50,
-    maxWidth: 540,
+    padding: 24,
+    paddingBottom: 60,
+    maxWidth: 480,
     width: '100%',
     alignSelf: 'center',
   } as ViewStyle,
 
   header: {
     alignItems: 'center',
-    marginBottom: 20,
-    marginTop: 10,
+    marginBottom: 24,
+    marginTop: 14,
   } as ViewStyle,
   logoBadge: {
-    width: 60,
-    height: 60,
-    borderRadius: 16,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
     backgroundColor: color.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: color.amber,
-    marginBottom: 10,
-    shadowColor: color.amber,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
+    borderWidth: 1.5,
+    borderColor: color.hairline,
+    marginBottom: 12,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 3,
   } as ViewStyle,
-  logoEmoji: {
-    fontSize: 30,
-  } as TextStyle,
   appTitle: {
     fontSize: 22,
-    fontWeight: '900',
-    color: color.amber,
-    fontFamily: font.mono,
-    letterSpacing: 2,
+    fontWeight: '800',
+    color: color.text,
+    fontFamily: font.display,
+    letterSpacing: -0.5,
     marginBottom: 4,
   } as TextStyle,
   appSubtitle: {
-    fontSize: 11,
+    fontSize: 12,
     color: color.textMuted,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 18,
+    maxWidth: 320,
   } as TextStyle,
 
-  // GPS Status Card
   localAuthBanner: {
     backgroundColor: color.amberWash,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
+    marginBottom: 16,
+    borderWidth: 1,
     borderColor: color.amber,
   } as ViewStyle,
   localAuthTitle: {
     fontSize: 11,
-    fontWeight: '900',
-    color: color.amber,
-    letterSpacing: 1,
-    marginBottom: 5,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.5,
+    marginBottom: 4,
   } as TextStyle,
   localAuthText: {
     fontSize: 11,
-    color: color.amber,
+    color: color.textMuted,
     lineHeight: 16,
   } as TextStyle,
 
   gpsCard: {
     backgroundColor: color.surface,
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 14,
+    padding: 12,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   } as ViewStyle,
   gpsRow: {
     flexDirection: 'row',
@@ -406,28 +467,31 @@ const styles = StyleSheet.create({
     backgroundColor: color.amber,
   } as ViewStyle,
   gpsText: {
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: font.mono,
-    fontWeight: '800',
+    fontWeight: '600',
     color: color.textMuted,
-    letterSpacing: 0.5,
   } as TextStyle,
 
-  // Role Selector Card
   roleCard: {
     backgroundColor: color.surface,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     marginBottom: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   } as ViewStyle,
   roleCardTitle: {
     fontSize: 11,
     fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
+    fontWeight: '700',
+    color: color.textFaint,
+    letterSpacing: 0.8,
     marginBottom: 12,
     textAlign: 'center',
   } as TextStyle,
@@ -438,36 +502,39 @@ const styles = StyleSheet.create({
   roleTab: {
     flex: 1,
     backgroundColor: color.groundDeep,
-    borderRadius: 12,
+    borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: color.hairline,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   } as ViewStyle,
   roleTabActiveCitizen: {
     backgroundColor: color.signalWash,
     borderColor: color.signal,
   } as ViewStyle,
   roleTabActiveHospital: {
-    backgroundColor: color.surfaceMuted,
-    borderColor: color.amber,
+    backgroundColor: color.blueWash,
+    borderColor: color.blue,
   } as ViewStyle,
-  roleTabEmoji: {
-    fontSize: 24,
-    marginBottom: 4,
-  } as TextStyle,
+  roleTabActiveControl: {
+    backgroundColor: color.purpleWash,
+    borderColor: color.purple,
+  } as ViewStyle,
   roleTabText: {
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '800',
     color: color.textMuted,
-    fontFamily: font.mono,
-    letterSpacing: 1,
+    fontFamily: font.display,
+    marginTop: 6,
   } as TextStyle,
   roleTabTextActiveCitizen: {
-    color: color.signalLift,
+    color: color.signal,
   } as TextStyle,
   roleTabTextActiveHospital: {
-    color: color.amber,
+    color: color.blue,
+  } as TextStyle,
+  roleTabTextActiveControl: {
+    color: color.purple,
   } as TextStyle,
   roleTabSub: {
     fontSize: 10,
@@ -475,97 +542,85 @@ const styles = StyleSheet.create({
     marginTop: 2,
   } as TextStyle,
 
-  // Hospital Picker Card
   hospitalPickerCard: {
-    backgroundColor: color.surface,
-    borderRadius: 14,
-    padding: 14,
+    backgroundColor: color.blueWash,
+    borderRadius: 16,
+    padding: 16,
     marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: color.hairline,
+    borderWidth: 1,
+    borderColor: color.blue,
+  } as ViewStyle,
+  controlPickerCard: {
+    backgroundColor: color.purpleWash,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: color.purple,
   } as ViewStyle,
   fieldLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: font.mono,
     fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
+    color: color.blue,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  } as TextStyle,
+  controlFieldLabel: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    fontWeight: '800',
+    color: color.purple,
+    letterSpacing: 0.8,
     marginBottom: 6,
   } as TextStyle,
   hospitalAutoNote: {
-    fontSize: 10,
+    fontSize: 11,
     color: color.textMuted,
-    marginBottom: 10,
-    lineHeight: 14,
+    lineHeight: 16,
   } as TextStyle,
-  hospitalList: {
-    gap: 8,
-  } as ViewStyle,
-  hospitalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.surfaceMuted,
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  hospitalItemActive: {
-    backgroundColor: color.surfaceMuted,
-    borderColor: color.amber,
-  } as ViewStyle,
-  hospitalName: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: color.textMuted,
-  } as TextStyle,
-  hospitalNameActive: {
+  hospitalDemoNote: {
+    fontSize: 11,
+    fontFamily: font.mono,
     color: color.text,
-  } as TextStyle,
-  hospitalCity: {
-    fontSize: 10,
-    color: color.textFaint,
-    marginTop: 2,
-  } as TextStyle,
-  radioIcon: {
-    fontSize: 16,
-    color: color.hairlineStrong,
-    marginLeft: 8,
-  } as TextStyle,
-  radioIconActive: {
-    color: color.amber,
+    lineHeight: 16,
+    marginTop: 10,
   } as TextStyle,
 
-  // Credentials Auth Card
   authCard: {
     backgroundColor: color.surface,
-    borderRadius: 16,
-    padding: 18,
+    borderRadius: 22,
+    padding: 20,
     marginBottom: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 3,
   } as ViewStyle,
   authCardTitle: {
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: 14,
+    fontWeight: '800',
     color: color.text,
-    fontFamily: font.mono,
-    letterSpacing: 1,
-    marginBottom: 14,
+    fontFamily: font.display,
+    letterSpacing: -0.2,
+    marginBottom: 16,
     textAlign: 'center',
   } as TextStyle,
   errorBanner: {
     backgroundColor: color.signalWash,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 12,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: color.signal,
   } as ViewStyle,
   errorText: {
-    fontSize: 11,
-    color: color.signalLift,
-    fontWeight: '700',
+    fontSize: 12,
+    color: color.signalDeep,
+    fontWeight: '600',
   } as TextStyle,
 
   inputGroup: {
@@ -574,109 +629,74 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.textMuted,
-    letterSpacing: 0.8,
+    fontWeight: '700',
+    color: color.textFaint,
+    letterSpacing: 0.6,
     marginBottom: 6,
   } as TextStyle,
   textInput: {
     backgroundColor: color.groundDeep,
-    borderRadius: 10,
-    paddingHorizontal: 14,
+    borderRadius: 12,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     color: color.text,
     fontSize: 14,
     borderWidth: 1,
     borderColor: color.hairline,
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
   } as TextStyle,
 
   submitBtn: {
-    borderRadius: 12,
-    paddingVertical: 15,
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 6,
     marginBottom: 12,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 3,
   } as ViewStyle,
   submitBtnCitizen: {
-    backgroundColor: color.signalDeep,
+    backgroundColor: color.signal,
   } as ViewStyle,
   submitBtnHospital: {
-    backgroundColor: color.amber,
+    backgroundColor: color.blue,
+  } as ViewStyle,
+  submitBtnControl: {
+    backgroundColor: color.purple,
   } as ViewStyle,
   submitBtnText: {
     fontSize: 13,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.6,
   } as TextStyle,
 
   googleBtn: {
-    backgroundColor: color.hairline,
-    borderRadius: 12,
-    paddingVertical: 14,
+    backgroundColor: color.surface,
+    borderRadius: 14,
+    paddingVertical: 13,
     alignItems: 'center',
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: color.amber,
+    borderWidth: 1.5,
+    borderColor: color.hairline,
   } as ViewStyle,
   googleBtnText: {
     fontSize: 12,
-    fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
+    fontWeight: '700',
+    color: color.text,
+    letterSpacing: 0.5,
   } as TextStyle,
 
   toggleAuthRow: {
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 6,
   } as ViewStyle,
   toggleAuthText: {
-    fontSize: 11,
-    color: color.amber,
+    fontSize: 12,
+    color: color.textMuted,
     fontWeight: '600',
   } as TextStyle,
-
-  // Demo Card
-  demoCard: {
-    backgroundColor: color.groundDeep,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: color.hairline,
-  } as ViewStyle,
-  demoCardTitle: {
-    fontSize: 10,
-    fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 1,
-    marginBottom: 10,
-    textAlign: 'center',
-  } as TextStyle,
-  demoButtonsRow: {
-    gap: 8,
-  } as ViewStyle,
-  demoCitizenBtn: {
-    backgroundColor: color.signalWash,
-    borderRadius: 10,
-    paddingVertical: 11,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: color.signal,
-  } as ViewStyle,
-  demoHospitalBtn: {
-    backgroundColor: color.surfaceMuted,
-    borderRadius: 10,
-    paddingVertical: 11,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: color.amber,
-  } as ViewStyle,
-  demoBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: color.text,
-    letterSpacing: 1,
-  } as TextStyle,
 });
+

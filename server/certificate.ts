@@ -8,6 +8,8 @@
 // ============================================================================
 
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import Incident, { type IIncident, type ICertificateRecord } from './models/Incident';
+import { PUBLIC_BASE_URL } from './config';
 
 export interface LegalShieldParams {
   userId: string;

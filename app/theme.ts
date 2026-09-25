@@ -1,78 +1,86 @@
 // ============================================================================
-// SAMARITAN SHIELD — "Signal" design tokens
-//
-// One source for colour, type and spacing. Values are literal rather than
-// derived so they survive a copy into a mockup or a spec, and they are the
-// same numbers the design canvas uses.
-//
-// Colours were mixed in oklch and converted to hex here: React Native's
-// StyleSheet does not accept oklch(), and the web build has to match native.
+// SAMARITAN SHIELD — Modern Emergency Design System Tokens
+// Inspired by clean iOS safety HUDs and modern emergency response interfaces.
 // ============================================================================
 
 import { Platform } from 'react-native';
 
 export const color = {
-  /** Page ground — warm near-black, not neutral slate. */
-  ground: '#231512',
-  groundDeep: '#1d1110',
-  /** Raised surfaces: cards, inputs, list rows. */
-  surface: '#33211c',
-  surfaceMuted: '#2b1b17',
-  /** Borders. Hairline is the default; strong marks a focused element. */
-  hairline: '#4d332b',
-  hairlineStrong: '#5f4038',
+  /** Page ground & surfaces */
+  ground: '#F6F8FA',
+  groundDeep: '#EEF2F6',
+  surface: '#FFFFFF',
+  surfaceMuted: '#F8FAFC',
+  surfaceElevated: '#FFFFFF',
 
-  text: '#f7ece6',
-  textMuted: '#c0a99f',
-  textFaint: '#9b857c',
+  /** Borders & dividers */
+  hairline: '#E2E8F0',
+  hairlineStrong: '#CBD5E1',
 
-  /** The one signal colour. `signal` for fills, `signalLift` for gradient tops. */
-  signal: '#e0442b',
-  signalLift: '#f4643f',
-  signalDeep: '#a8321f',
-  signalWash: 'rgba(224, 68, 43, 0.14)',
+  /** High-contrast legible text */
+  text: '#0F172A',
+  textMuted: '#475569',
+  textFaint: '#94A3B8',
 
-  /** Secondary accent — data, progress, the affirmative action on dark. */
-  amber: '#f2a03d',
-  amberWash: 'rgba(242, 160, 61, 0.13)',
-  confirm: '#4ade9a',
-  confirmWash: 'rgba(74, 222, 154, 0.13)',
+  /** Emergency & Alert (Crimson / Coral from concept reference) */
+  signal: '#FF3B5C',
+  signalLift: '#FF5975',
+  signalDeep: '#E11D48',
+  urgent: '#FF3B5C',
+  signalWash: 'rgba(255, 59, 92, 0.12)',
+  signalWashDeep: 'rgba(255, 59, 92, 0.22)',
 
-  onSignal: '#ffffff',
-  onAmber: '#231512',
+  /** Safety / Radar Palette (Mint & Emerald from reference 1) */
+  radarGround: '#E2F7EB',
+  radarMint: '#A7F3D0',
+  radarCenter: '#6EE7B7',
+  radarSweep: 'rgba(16, 185, 129, 0.35)',
+  radarRing: 'rgba(16, 185, 129, 0.25)',
+  confirm: '#10B981',
+  confirmWash: 'rgba(16, 185, 129, 0.14)',
+
+  /** Secondary Accents */
+  amber: '#F59E0B',
+  amberWash: 'rgba(245, 158, 11, 0.14)',
+  blue: '#3B82F6',
+  blueWash: 'rgba(59, 130, 246, 0.12)',
+  purple: '#8B5CF6',
+  purpleWash: 'rgba(139, 92, 246, 0.12)',
+
+  onSignal: '#FFFFFF',
+  onAmber: '#0F172A',
+  onConfirm: '#FFFFFF',
 } as const;
 
 export const font = {
-  /** Headlines and numerals that carry a screen. */
   display: Platform.select({
-    web: "'Bricolage Grotesque', 'Helvetica Neue', sans-serif",
+    web: "'Plus Jakarta Sans', 'Bricolage Grotesque', system-ui, -apple-system, sans-serif",
     default: 'System',
   }) as string,
-  /** Body copy and controls. */
   body: Platform.select({
-    web: "'Instrument Sans', 'Helvetica Neue', sans-serif",
+    web: "'Plus Jakarta Sans', 'Instrument Sans', system-ui, -apple-system, sans-serif",
     default: 'System',
   }) as string,
-  /** Anything numeric: hashes, coordinates, counts, ETAs. */
   mono: Platform.select({
-    web: "'DM Mono', ui-monospace, monospace",
+    web: "'JetBrains Mono', 'DM Mono', ui-monospace, monospace",
     default: 'monospace',
   }) as string,
 } as const;
 
-/** Tracking is part of the type, not decoration — display type is tight. */
 export const tracking = {
-  display: -1.2,
-  heading: -0.5,
+  display: -0.8,
+  heading: -0.4,
   body: 0,
-  label: 1.4,
+  label: 0.8,
 } as const;
 
 export const radius = {
-  sm: 9,
-  md: 13,
-  lg: 15,
-  xl: 19,
+  xs: 6,
+  sm: 10,
+  md: 14,
+  lg: 18,
+  xl: 24,
+  xxl: 32,
   pill: 999,
 } as const;
 
@@ -85,26 +93,39 @@ export const space = {
   xxl: 30,
 } as const;
 
-/** Minimum touch target. Non-negotiable: this is used one-handed under stress. */
 export const HIT = 44;
 
 export const shadow = {
   signal: {
-    shadowColor: '#e0442b',
-    shadowOpacity: 0.5,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 12,
+    shadowColor: '#FF3B5C',
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
   card: {
-    shadowColor: '#000000',
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  soft: {
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  radar: {
+    shadowColor: '#10B981',
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 5,
+    elevation: 6,
   },
 } as const;
 
-/** Google Fonts for the web build; native falls back to the system face. */
 export const WEB_FONT_HREF =
-  'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap';
+  'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap';
+

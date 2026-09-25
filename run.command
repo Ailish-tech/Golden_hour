@@ -4,7 +4,7 @@
 # Double-click this file (macOS) or run ./run.command to set up, verify and
 # launch the whole project.
 #
-#   ./run.command            setup, verify, then launch server + app
+#   ./run.command            setup, verify, then launch Mongo + API + ML + app
 #   ./run.command verify     setup and run the checks, then stop
 #   ./run.command stop       stop the background MongoDB container
 # ============================================================================
@@ -16,14 +16,19 @@ BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
 YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
 
 SERVER_PORT=3000
+ML_PORT=8000
 MONGO_PORT=27017
 MONGO_CONTAINER=golden-hour-mongo
 HOSPITAL_EMAIL=hospital@local.test
+CONTROL_EMAIL=control@local.test
 MONGO_HOME="$HOME/.golden-hour"
 MONGO_DATA="$MONGO_HOME/mongodb"
 MONGO_LOG="$MONGO_HOME/mongod.log"
 MONGO_PIDFILE="$MONGO_HOME/mongod.pid"
 SERVER_PID=""
+ML_PID=""
+ML_READY=""
+DEFAULT_ML_TOKEN="local-ml-dev-token"
 
 step()  { printf '\n%s▸ %s%s\n' "$BOLD$BLUE" "$1" "$RESET"; }
 ok()    { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
@@ -39,6 +44,11 @@ die() {
 }
 
 cleanup() {
+  if [ -n "$ML_PID" ] && kill -0 "$ML_PID" 2>/dev/null; then
+    printf '\n%sStopping ML service (pid %s)...%s\n' "$DIM" "$ML_PID" "$RESET"
+    kill "$ML_PID" 2>/dev/null
+    wait "$ML_PID" 2>/dev/null
+  fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     printf '\n%sStopping backend (pid %s)...%s\n' "$DIM" "$SERVER_PID" "$RESET"
     kill "$SERVER_PID" 2>/dev/null
@@ -213,6 +223,24 @@ else
   ensure_env server/.env ALLOW_INSECURE_NO_AUTH "true" && server_added="yes"
   ok "server/.env — local dev auth (tokens are not verified)."
 fi
+ensure_env server/.env OSRM_BASE_URL "https://router.project-osrm.org" && server_added="yes"
+ensure_env server/.env GREEN_CORRIDOR_SIGNAL_RADIUS_M "80" && server_added="yes"
+ensure_env server/.env CORS_ORIGINS "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:19006" && server_added="yes"
+
+# One shared secret for Node ↔ Python. Generate once, copy to both files.
+env_value() { grep -E "^[[:space:]]*$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
+
+ML_TOKEN="$(env_value server/.env ML_SERVICE_TOKEN)"
+if [ -z "$ML_TOKEN" ]; then
+  ML_TOKEN="$DEFAULT_ML_TOKEN"
+  if env_has server/.env ML_SERVICE_TOKEN; then
+    grep -v '^[[:space:]]*ML_SERVICE_TOKEN=' server/.env > server/.env.tmp && mv server/.env.tmp server/.env
+  fi
+  printf 'ML_SERVICE_TOKEN=%s\n' "$ML_TOKEN" >> server/.env
+  server_added="yes"
+fi
+ok "server/.env — ML_SERVICE_TOKEN is set."
+
 [ -n "$server_added" ] && warn "Added missing settings to server/.env."
 
 # --- Firebase service account (optional) ----------------------------------
@@ -263,6 +291,7 @@ fi
 # --- app ------------------------------------------------------------------
 app_added=""
 ensure_env app/.env EXPO_PUBLIC_API_URL "http://localhost:$SERVER_PORT" && app_added="yes"
+ensure_env app/.env EXPO_PUBLIC_ML_URL "http://localhost:$ML_PORT" && app_added="yes"
 
 if env_has app/.env EXPO_PUBLIC_FIREBASE_API_KEY; then
   ok "app/.env — using the configured Firebase project."
@@ -271,6 +300,22 @@ else
   ok "app/.env — local sign-in, no Firebase project needed."
 fi
 [ -n "$app_added" ] && warn "Added missing settings to app/.env."
+
+# --- ml -------------------------------------------------------------------
+mkdir -p ml/data/videos ml/models
+if [ ! -f ml/.env ]; then
+  cp ml/.env.example ml/.env 2>/dev/null || : > ml/.env
+  ok "Created ml/.env."
+fi
+# Always keep the Python token identical to the server's. A mismatch is a
+# 401 on every detection and looks like the model is broken.
+if env_has ml/.env ML_SERVICE_TOKEN; then
+  grep -v '^[[:space:]]*ML_SERVICE_TOKEN=' ml/.env > ml/.env.tmp && mv ml/.env.tmp ml/.env
+fi
+printf 'ML_SERVICE_TOKEN=%s\n' "$ML_TOKEN" >> ml/.env
+ensure_env ml/.env NODE_API_BASE "http://localhost:$SERVER_PORT" || true
+ensure_env ml/.env YOLO_MODEL "yolov8n.pt" || true
+ok "ml/.env — token matches the backend."
 
 # ---------------------------------------------------------------------------
 # 4. Dependencies
@@ -292,6 +337,51 @@ install_deps() {
 
 install_deps server
 install_deps app
+
+# --- Python ML service ----------------------------------------------------
+# Python 3.11 only. 3.14 has no ultralytics wheels; a source build of torch
+# is a multi-hour detour. Missing Python skips the detector, not the rest.
+step "Python ML service"
+
+find_python311() {
+  local c
+  for c in /opt/homebrew/bin/python3.11 /usr/local/bin/python3.11 python3.11; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2]==(3,11) else 1)' 2>/dev/null; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if PY311=$(find_python311); then
+  ok "Python $($PY311 -V 2>&1 | awk '{print $2}') at $PY311"
+  if [ ! -x ml/.venv/bin/python ]; then
+    printf '  creating ml/.venv (first run — installing torch/yolo, a few minutes)...\n'
+    "$PY311" -m venv ml/.venv \
+      || die "Could not create ml/.venv"
+    ml/.venv/bin/pip install -q --upgrade pip
+    ml/.venv/bin/pip install -q -r ml/requirements.txt \
+      || die "pip install failed in ml/. Run: cd ml && .venv/bin/pip install -r requirements.txt"
+    ok "ml/.venv — dependencies installed."
+  else
+    ok "ml/.venv — already installed."
+  fi
+
+  if [ ! -f ml/data/videos/test_video_1.mp4 ]; then
+    printf '  downloading sample accident clip...\n'
+    curl -fsSL -o ml/data/videos/test_video_1.mp4 \
+      "https://raw.githubusercontent.com/Soham2212004/Road-Accident-Detection-Alert-System/main/test_video.mp4" \
+      && ok "Saved ml/data/videos/test_video_1.mp4" \
+      || warn "Could not download the sample clip — drop an mp4 into ml/data/videos/."
+  else
+    ok "Sample clip present."
+  fi
+  ML_READY="yes"
+else
+  warn "Python 3.11 not found — starting without the CCTV detector."
+  warn "Install with: brew install python@3.11   then re-run this file."
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Verification
@@ -371,16 +461,85 @@ HEALTH=$(curl -fsS "http://localhost:$SERVER_PORT/api/health" 2>/dev/null) \
 ok "Backend healthy — $HEALTH"
 
 # ---------------------------------------------------------------------------
+# 6a. ML service
+# ---------------------------------------------------------------------------
+if [ "$ML_READY" = "yes" ]; then
+  step "Starting the ML service on port $ML_PORT"
+
+  if port_busy "$ML_PORT"; then
+    holder_pid=$(lsof -ti:"$ML_PORT" -sTCP:LISTEN 2>/dev/null | head -1)
+    holder_cmd=$(ps -p "${holder_pid:-0}" -o command= 2>/dev/null || true)
+    case "$holder_cmd" in
+      *uvicorn*|*main:app*)
+        warn "Reclaiming port $ML_PORT from an earlier ML service (pid $holder_pid)."
+        kill "$holder_pid" 2>/dev/null
+        sleep 1
+        ;;
+      *)
+        warn "Port $ML_PORT is already in use — assuming that is the detector."
+        ;;
+    esac
+  fi
+
+  if ! port_busy "$ML_PORT"; then
+    ( cd ml && .venv/bin/uvicorn main:app --host 127.0.0.1 --port "$ML_PORT" > "../.logs/ml.log" 2>&1 ) &
+    ML_PID=$!
+    printf '  waiting for the detector'
+    for _ in $(seq 1 60); do
+      if curl -fsS "http://localhost:$ML_PORT/health" >/dev/null 2>&1; then break; fi
+      if ! kill -0 "$ML_PID" 2>/dev/null; then
+        printf '\n'; tail -30 .logs/ml.log
+        warn "ML service exited. Control room still works without live feeds. Log: .logs/ml.log"
+        ML_PID=""
+        break
+      fi
+      printf '.'; sleep 1
+    done
+    printf '\n'
+    if curl -fsS "http://localhost:$ML_PORT/health" >/dev/null 2>&1; then
+      ok "ML healthy — $(curl -fsS "http://localhost:$ML_PORT/health")"
+    fi
+  else
+    ok "ML already listening on port $ML_PORT."
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6b. Hospital desk account
 # ---------------------------------------------------------------------------
 step "Provisioning a hospital desk account"
-if ( cd server && npx ts-node scripts/seed-hospital-staff.ts \
+HOSP_SEED=$(cd server && npx ts-node scripts/seed-hospital-staff.ts \
+       --if-empty \
        --email "$HOSPITAL_EMAIL" \
        --hospitalId HOSP-01 \
-       --hospitalName "Sawai Man Singh (SMS) Government Trauma Hospital" >/dev/null 2>&1 ); then
+       --hospitalName "Sawai Man Singh (SMS) Government Trauma Hospital" 2>&1) || true
+if printf '%s' "$HOSP_SEED" | grep -q '^SKIPPED:'; then
+  ok "Hospital staff already in the database — not reseeding."
+elif printf '%s' "$HOSP_SEED" | grep -q 'allowlisted'; then
   ok "$HOSPITAL_EMAIL can reach the hospital desk."
 else
   warn "Could not seed the hospital account — the citizen side still works."
+fi
+
+step "Provisioning city cameras + control room"
+CITY_SEED=$(cd server && npx ts-node scripts/seed-city.ts --if-empty "$CONTROL_EMAIL" 2>&1) || true
+if printf '%s' "$CITY_SEED" | grep -q '^SKIPPED:'; then
+  ok "City cameras and signals already in the database — not reseeding."
+elif printf '%s' "$CITY_SEED" | grep -q 'Seeded'; then
+  ok "$CONTROL_EMAIL can open the control room. Six cameras point at the sample clip."
+else
+  warn "Could not seed cameras / control-room staff. Run: npm --prefix server run seed:city -- $CONTROL_EMAIL"
+fi
+
+step "Provisioning Firebase demo logins"
+DEMO_LOGINS=$(cd server && npx ts-node scripts/ensure-demo-logins.ts 2>&1) || true
+if printf '%s' "$DEMO_LOGINS" | grep -q 'Firebase created\|Firebase updated'; then
+  ok "Hospital and control-room emails can sign in with password123."
+elif printf '%s' "$DEMO_LOGINS" | grep -q 'local sign-in mode'; then
+  ok "Local sign-in — any 6+ character password works for the desk accounts."
+else
+  warn "Could not create Firebase desk logins — hospital/control sign-in may fail."
+  printf '%s\n' "$DEMO_LOGINS"
 fi
 
 # ---------------------------------------------------------------------------
@@ -410,20 +569,25 @@ fi
 step "Launching the app"
 cat <<INFO
 
-  ${BOLD}Backend${RESET}  http://localhost:$SERVER_PORT   ${DIM}(log: .logs/server.log)${RESET}
-  ${BOLD}App${RESET}      opening in your browser shortly
+  ${BOLD}Backend${RESET}       http://localhost:$SERVER_PORT   ${DIM}(log: .logs/server.log)${RESET}
+  ${BOLD}ML / CCTV${RESET}     http://localhost:$ML_PORT/stream/JAI-CAM-014   ${DIM}(log: .logs/ml.log)${RESET}
+  ${BOLD}App${RESET}           opening in your browser shortly
 
-  ${BOLD}Sign in — no account setup needed${RESET}
-    Citizen:   any email address, any password of 6+ characters
-    Hospital:  ${BOLD}$HOSPITAL_EMAIL${RESET}, any password of 6+ characters
+  ${BOLD}Sign in${RESET}
+    Citizen:        any email + password (Sign Up first if the account is new)
+    Hospital CAD:   ${BOLD}$HOSPITAL_EMAIL${RESET}  /  password123
+    Control room:   ${BOLD}$CONTROL_EMAIL${RESET}   /  password123
 
-  ${BOLD}To see the whole thing work${RESET}
-    1. Sign in as a citizen and press SOS. Note the SHA-256 shown.
-    2. Open a second browser profile (or a private window) and sign in with
-       $HOSPITAL_EMAIL — that is the hospital desk.
-    3. The desk shows the incident. Dispatch a unit; the citizen screen updates.
-    4. Compare the SHA-256 on both. They match, and
-       ${BOLD}http://localhost:$SERVER_PORT/api/verify/<hash>${RESET} confirms the server holds it.
+  ${BOLD}Demo path for judges${RESET}
+    1. Control room ($CONTROL_EMAIL) — live camera grid + intersection sim.
+       Tap ${BOLD}Inject ambulance${RESET} for the DEMO corridor, or wait ~8s into
+       the looping clip for a real detection.
+    2. Hospital desk ($HOSPITAL_EMAIL) — incoming auto-call banner, then
+       dispatch. That opens the live green corridor.
+    3. Citizen (any other email, second browser profile) — accident banner
+       with I'M RESPONDING (certificate) / NOT NOW.
+    4. Verify a certificate at
+       ${BOLD}http://localhost:$SERVER_PORT/api/verify/<hash>${RESET}
 
   ${DIM}Sign-in here is a local stand-in, not real authentication: no password is
   checked and no token is verified. Both sides opted into it explicitly and the
@@ -432,7 +596,7 @@ cat <<INFO
   Voice triage needs Chrome or Safari. Native speech recognition needs a
   development build, not Expo Go.${RESET}
 
-  ${YELLOW}Press Ctrl+C to stop everything.${RESET}
+  ${YELLOW}Press Ctrl+C to stop the app, backend and ML service.${RESET}
   ${DIM}MongoDB keeps running; stop it with ./run.command stop${RESET}
 
 INFO

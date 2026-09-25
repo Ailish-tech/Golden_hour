@@ -23,6 +23,7 @@ import {
 } from './icons';
 import { type AppUserProfile } from './firebaseConfig';
 import { authedFetch } from './api';
+import { connectLive } from './liveSocket';
 
 export interface EmergencyIncidentItem {
   id: string;
@@ -58,6 +59,12 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 }) => {
   const [icuBeds, setIcuBeds] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<EmergencyIncidentItem[]>([]);
+  const [incomingCall, setIncomingCall] = useState<{
+    incidentCode: string;
+    spoken: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   // -------------------------------------------------------------------------
   // Live End-to-End Telemetry Polling (Every 2.5s)
@@ -85,6 +92,23 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
     fetchLiveIncidents();
     const timer = setInterval(fetchLiveIncidents, 2500);
     return () => clearInterval(timer);
+  }, [fetchLiveIncidents]);
+
+  useEffect(() => {
+    return connectLive({
+      'hospital-call': (payload) => {
+        setIncomingCall({
+          incidentCode: String(payload.incidentCode ?? 'CAD'),
+          spoken: String(payload.spoken ?? 'Incoming emergency. Open the CAD desk.'),
+          lat: Number(payload.lat),
+          lng: Number(payload.lng),
+        });
+        void fetchLiveIncidents();
+      },
+      'incident-created': () => {
+        void fetchLiveIncidents();
+      },
+    });
   }, [fetchLiveIncidents]);
 
   // Capacity is shared state, not a local counter: what this desk reports is
@@ -249,6 +273,15 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      {incomingCall && (
+        <View style={styles.incomingCallBanner}>
+          <Text style={styles.incomingCallKicker}>INCOMING HOSPITAL AUTO-CALL · {incomingCall.incidentCode}</Text>
+          <Text style={styles.incomingCallBody}>{incomingCall.spoken}</Text>
+          <TouchableOpacity style={styles.incomingCallAck} onPress={() => setIncomingCall(null)}>
+            <Text style={styles.incomingCallAckText}>ACKNOWLEDGE</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {/* Hospital Identity Header Card */}
       <View style={styles.hospitalHeroCard}>
         <View style={styles.heroTopRow}>
@@ -490,14 +523,18 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   } as ViewStyle,
 
-  // Hospital Hero Card
   hospitalHeroCard: {
     backgroundColor: color.surface,
-    borderRadius: 18,
-    padding: 18,
+    borderRadius: 20,
+    padding: 20,
     marginBottom: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    elevation: 2,
   } as ViewStyle,
   heroTopRow: {
     flexDirection: 'row',
@@ -505,23 +542,22 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   } as ViewStyle,
   hospitalIconBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: color.hairline,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: color.blueWash,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    borderWidth: 1,
-    borderColor: color.amber,
   } as ViewStyle,
   hospitalIcon: {
-    fontSize: 24,
+    fontSize: 22,
   } as TextStyle,
   hospitalName: {
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '800',
     color: color.text,
+    fontFamily: font.display,
     lineHeight: 22,
   } as TextStyle,
   deskTagRow: {
@@ -539,50 +575,50 @@ const styles = StyleSheet.create({
   deskTagText: {
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
-    letterSpacing: 0.5,
+    fontWeight: '700',
+    color: color.confirm,
+    letterSpacing: 0.4,
   } as TextStyle,
 
   statsGrid: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   } as ViewStyle,
   statBox: {
     flex: 1,
     backgroundColor: color.groundDeep,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: color.hairline,
   } as ViewStyle,
   statNumAlert: {
-    fontSize: 20,
-    fontWeight: '900',
+    fontSize: 22,
+    fontWeight: '800',
     color: color.signal,
-    fontFamily: font.mono,
+    fontFamily: font.display,
   } as TextStyle,
   statNumGreen: {
-    fontSize: 20,
-    fontWeight: '900',
+    fontSize: 22,
+    fontWeight: '800',
     color: color.confirm,
-    fontFamily: font.mono,
+    fontFamily: font.display,
   } as TextStyle,
   statNumCyan: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: color.amber,
-    fontFamily: font.mono,
+    fontSize: 22,
+    fontWeight: '800',
+    color: color.blue,
+    fontFamily: font.display,
     marginHorizontal: 4,
   } as TextStyle,
   statLabel: {
-    fontSize: 8,
+    fontSize: 9,
     fontFamily: font.mono,
-    fontWeight: '800',
+    fontWeight: '700',
     color: color.textFaint,
     marginTop: 4,
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
     textAlign: 'center',
   } as TextStyle,
 
@@ -591,17 +627,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   } as ViewStyle,
   bedBtn: {
-    backgroundColor: color.hairline,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    backgroundColor: color.surface,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: color.hairline,
   } as ViewStyle,
   bedBtnText: {
-    color: color.amber,
+    color: color.blue,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '800',
     marginTop: -2,
   } as TextStyle,
 
@@ -622,22 +660,22 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontFamily: font.mono,
-    fontWeight: '900',
-    color: color.amber,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: 0.6,
   } as TextStyle,
   sectionMeta: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: font.mono,
     color: color.textFaint,
   } as TextStyle,
 
   emptyStateCard: {
-    backgroundColor: color.groundDeep,
-    borderRadius: 16,
-    padding: 24,
+    backgroundColor: color.surface,
+    borderRadius: 18,
+    padding: 28,
     alignItems: 'center',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: color.hairline,
     borderStyle: 'dashed',
     marginBottom: 16,
@@ -648,18 +686,18 @@ const styles = StyleSheet.create({
   } as TextStyle,
   emptyStateTitle: {
     fontSize: 14,
-    fontFamily: font.mono,
-    fontWeight: '900',
-    color: color.textMuted,
-    letterSpacing: 1,
+    fontFamily: font.display,
+    fontWeight: '800',
+    color: color.text,
+    letterSpacing: -0.2,
     marginBottom: 8,
   } as TextStyle,
   emptyStateText: {
     fontSize: 12,
-    color: color.hairlineStrong,
+    color: color.textMuted,
     textAlign: 'center',
     lineHeight: 18,
-    maxWidth: '80%',
+    maxWidth: '85%',
   } as TextStyle,
 
   // Incident Cards
@@ -668,18 +706,23 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   incidentCard: {
     backgroundColor: color.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: color.hairline,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   } as ViewStyle,
   incidentCardPending: {
     borderColor: color.signal,
-    backgroundColor: color.signalWash,
+    backgroundColor: '#FFF5F6',
   } as ViewStyle,
   incidentCardEnRoute: {
     borderColor: color.confirm,
-    backgroundColor: color.confirmWash,
+    backgroundColor: '#F0FDF4',
   } as ViewStyle,
 
   cardHeader: {
@@ -693,31 +736,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   } as ViewStyle,
   incidentStatusDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     marginRight: 6,
   } as ViewStyle,
   incidentCodeText: {
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '800',
     color: color.text,
     fontFamily: font.mono,
   } as TextStyle,
 
   distanceBadge: {
-    backgroundColor: color.surfaceMuted,
-    borderRadius: 6,
+    backgroundColor: color.surface,
+    borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: color.amber,
+    borderColor: color.hairline,
   } as ViewStyle,
   distanceBadgeText: {
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '800',
-    color: color.amber,
+    fontWeight: '700',
+    color: color.textMuted,
   } as TextStyle,
 
   detailRow: {
@@ -726,30 +769,30 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   } as ViewStyle,
   detailLabel: {
-    width: 125,
+    width: 120,
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '800',
+    fontWeight: '700',
     color: color.textFaint,
   } as TextStyle,
   detailValue: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     color: color.text,
     fontFamily: font.mono,
   } as TextStyle,
   detailValueCyan: {
     fontSize: 11,
-    fontWeight: '800',
-    color: color.amber,
+    fontWeight: '700',
+    color: color.blue,
     fontFamily: font.mono,
   } as TextStyle,
 
   victimStatusTagRed: {
     backgroundColor: color.signalWash,
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderWidth: 1,
     borderColor: color.signal,
   } as ViewStyle,
@@ -757,14 +800,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: font.mono,
     fontWeight: '800',
-    color: color.signalLift,
+    color: color.signalDeep,
   } as TextStyle,
 
   victimStatusTagYellow: {
     backgroundColor: color.amberWash,
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderWidth: 1,
     borderColor: color.amber,
   } as ViewStyle,
@@ -777,9 +820,9 @@ const styles = StyleSheet.create({
 
   victimStatusTagGreen: {
     backgroundColor: color.confirmWash,
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderWidth: 1,
     borderColor: color.confirm,
   } as ViewStyle,
@@ -793,8 +836,8 @@ const styles = StyleSheet.create({
   // Hash Box
   hashBox: {
     backgroundColor: color.groundDeep,
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    padding: 10,
     marginVertical: 10,
     borderWidth: 1,
     borderColor: color.hairline,
@@ -814,17 +857,17 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontFamily: font.mono,
     color: color.confirm,
-    fontWeight: '900',
+    fontWeight: '800',
   } as TextStyle,
   hashText: {
     fontSize: 9,
     fontFamily: font.mono,
-    color: color.confirm,
+    color: color.textMuted,
   } as TextStyle,
 
   unitAssignedBanner: {
     backgroundColor: color.confirmWash,
-    borderRadius: 8,
+    borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 12,
     marginBottom: 10,
@@ -843,67 +886,77 @@ const styles = StyleSheet.create({
     gap: 8,
   } as ViewStyle,
   dispatchUnitBtn: {
-    backgroundColor: color.signalDeep,
-    borderRadius: 10,
+    backgroundColor: color.signal,
+    borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: color.signal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 2,
   } as ViewStyle,
   dispatchBtnText: {
     fontSize: 12,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
   } as TextStyle,
 
   reserveBedBtn: {
-    backgroundColor: color.amber,
-    borderRadius: 10,
+    backgroundColor: color.blue,
+    borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: color.blue,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 2,
   } as ViewStyle,
   reserveBedBtnText: {
     fontSize: 12,
-    fontWeight: '900',
-    color: color.text,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
   } as TextStyle,
 
   secondaryActionRow: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
   } as ViewStyle,
   secCallBtn: {
     flex: 1,
-    backgroundColor: color.hairline,
-    borderRadius: 8,
-    paddingVertical: 9,
+    backgroundColor: color.surfaceMuted,
+    borderRadius: 10,
+    paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: color.amber,
+    borderColor: color.hairline,
   } as ViewStyle,
   secCertBtn: {
     flex: 1.4,
-    backgroundColor: color.hairline,
-    borderRadius: 8,
-    paddingVertical: 9,
+    backgroundColor: color.surfaceMuted,
+    borderRadius: 10,
+    paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: color.amber,
+    borderColor: color.hairline,
   } as ViewStyle,
   secMapBtn: {
     flex: 0.9,
-    backgroundColor: color.hairline,
-    borderRadius: 8,
-    paddingVertical: 9,
+    backgroundColor: color.surfaceMuted,
+    borderRadius: 10,
+    paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: color.hairlineStrong,
+    borderColor: color.hairline,
   } as ViewStyle,
   secBtnText: {
-    fontSize: 9,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '700',
     color: color.text,
     fontFamily: font.mono,
   } as TextStyle,
@@ -912,7 +965,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     backgroundColor: color.surfaceMuted,
     borderRadius: 10,
-    paddingVertical: 11,
+    paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: color.hairline,
@@ -920,14 +973,48 @@ const styles = StyleSheet.create({
   resolveBtnText: {
     fontSize: 10,
     fontFamily: font.mono,
-    fontWeight: '800',
+    fontWeight: '700',
     color: color.textMuted,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+  } as TextStyle,
+
+  incomingCallBanner: {
+    backgroundColor: '#7F1D1D',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  incomingCallKicker: {
+    color: '#FECACA',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  } as TextStyle,
+  incomingCallBody: {
+    color: '#FFF7ED',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 12,
+  } as TextStyle,
+  incomingCallAck: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  } as ViewStyle,
+  incomingCallAckText: {
+    color: '#7F1D1D',
+    fontWeight: '800',
+    fontSize: 12,
   } as TextStyle,
 
   logoutBtn: {
     backgroundColor: color.surfaceMuted,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
@@ -937,8 +1024,8 @@ const styles = StyleSheet.create({
   logoutBtnText: {
     fontSize: 11,
     fontFamily: font.mono,
-    fontWeight: '800',
+    fontWeight: '700',
     color: color.textMuted,
-    letterSpacing: 1,
+    letterSpacing: 0.6,
   } as TextStyle,
 });

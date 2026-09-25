@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-async function currentIdToken(): Promise<string> {
+export async function getBearerToken(): Promise<string> {
   // Checked before touching Firebase: getAuth() throws when no app was
   // initialised, which is exactly the case in local dev mode.
   if (AUTH_MODE === 'local') {
@@ -42,7 +42,7 @@ async function currentIdToken(): Promise<string> {
  */
 export async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   assertApiConfigured();
-  const token = await currentIdToken();
+  const token = await getBearerToken();
 
   const headers = new Headers(init.headers as HeadersInit | undefined);
   headers.set('Authorization', `Bearer ${token}`);
