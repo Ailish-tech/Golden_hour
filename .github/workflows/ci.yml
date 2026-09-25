@@ -9,6 +9,11 @@ jobs:
   server:
     name: Server — typecheck & tests
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
     defaults:
       run:
         working-directory: server
