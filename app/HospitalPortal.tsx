@@ -95,7 +95,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
   }, [fetchLiveIncidents]);
 
   useEffect(() => {
-    return connectLive({
+    const conn = connectLive({
       'hospital-call': (payload) => {
         setIncomingCall({
           incidentCode: String(payload.incidentCode ?? 'CAD'),
@@ -109,6 +109,7 @@ export const HospitalPortal: React.FC<HospitalPortalProps> = ({
         void fetchLiveIncidents();
       },
     });
+    return () => conn.disconnect();
   }, [fetchLiveIncidents]);
 
   // Capacity is shared state, not a local counter: what this desk reports is

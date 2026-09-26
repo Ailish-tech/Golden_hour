@@ -59,6 +59,8 @@ import {
 import QRCode from 'qrcode';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import VoiceTriage from './VoiceTriage';
 import AuthScreen from './AuthScreen';
 import HospitalPortal, { type EmergencyIncidentItem } from './HospitalPortal';
@@ -66,7 +68,7 @@ import ControlRoom from './ControlRoom';
 import { logoutUser, type AppUserProfile } from './firebaseConfig';
 import { authedFetch } from './api';
 import { voipService, type VoipCallSession } from './voipService';
-import { connectLive } from './liveSocket';
+import { connectLive, type LiveConnection } from './liveSocket';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -261,7 +263,11 @@ export default function App(): React.JSX.Element {
     lng: number;
     message: string;
     mapsUrl: string;
+    isNearby?: boolean;
   } | null>(null);
+
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecordingState, setIsRecordingState] = useState(false);
 
   // Every facility we actually know about, primary first.
   const nearbyHospitals: HospitalInfo[] = primaryHospital
@@ -276,21 +282,82 @@ export default function App(): React.JSX.Element {
   const ringOpacity = useRef<Animated.Value>(new Animated.Value(0.6)).current;
   const radarSweepAnim = useRef<Animated.Value>(new Animated.Value(0)).current;
 
+  // -- Ref to hold live connection so we can push location updates ----------
+  const liveConnRef = useRef<LiveConnection | null>(null);
+
   useEffect(() => {
     if (!currentUser || currentUser.role !== 'citizen') return;
-    return connectLive({
-      'citizen-alert': (payload) => {
-        setCitizenAlert({
-          incidentId: String(payload.incidentId ?? ''),
-          incidentCode: String(payload.incidentCode ?? 'CAD'),
-          lat: Number(payload.lat),
-          lng: Number(payload.lng),
-          message: String(payload.message ?? 'Accident nearby. Help if you can reach the scene.'),
-          mapsUrl: String(payload.mapsUrl ?? ''),
-        });
+
+    const conn = connectLive(
+      {
+        // Low-priority banner for all citizens (no alarm)
+        'citizen-alert': (payload) => {
+          setCitizenAlert({
+            incidentId: String(payload.incidentId ?? ''),
+            incidentCode: String(payload.incidentCode ?? 'CAD'),
+            lat: Number(payload.lat),
+            lng: Number(payload.lng),
+            message: String(payload.message ?? 'Accident nearby. Help if you can reach the scene.'),
+            mapsUrl: String(payload.mapsUrl ?? ''),
+            isNearby: false,
+          });
+        },
+
+        // High-priority alarm for citizens within 250 m
+        'nearby-sos': (payload) => {
+          setCitizenAlert({
+            incidentId: String(payload.incidentId ?? ''),
+            incidentCode: String(payload.incidentCode ?? 'CAD'),
+            lat: Number(payload.lat),
+            lng: Number(payload.lng),
+            message: String(
+              payload.message ??
+                '🚨 SOS — accident very close to you! Tap to respond as a Good Samaritan.',
+            ),
+            mapsUrl: String(payload.mapsUrl ?? ''),
+            isNearby: true,
+          });
+
+          if (payload.audioBase64) {
+            Audio.Sound.createAsync(
+              { uri: `data:audio/m4a;base64,${payload.audioBase64}` },
+              { shouldPlay: true }
+            ).catch(err => console.warn('SOS Audio play error:', err));
+          } else {
+            // Audible alarm via text-to-speech
+            Speech.speak(
+              `Emergency SOS! An accident has been reported within 250 metres of your location. ` +
+                `Incident ${String(payload.incidentCode ?? '')}. If you can help, tap I'm Responding.`,
+              { rate: 1.1, pitch: 1.0 },
+            );
+          }
+
+          // Haptic vibration pattern: three quick bursts
+          try {
+            Vibration.vibrate([0, 400, 200, 400, 200, 400]);
+          } catch (_e) {
+            // Vibration not available on all platforms
+          }
+        },
       },
-    });
-  }, [currentUser]);
+      coordinates, // send current GPS on subscribe
+    );
+
+    liveConnRef.current = conn;
+
+    // Push location updates every 30 seconds so the server keeps proximity info fresh
+    const locationInterval = setInterval(() => {
+      if (coordinates) {
+        conn.updateLocation(coordinates.lat, coordinates.lng);
+      }
+    }, 30_000);
+
+    return () => {
+      clearInterval(locationInterval);
+      conn.disconnect();
+      liveConnRef.current = null;
+    };
+  }, [currentUser, coordinates]);
 
   // -- Inject Web Google Fonts (Inter & JetBrains Mono) --------------------
   useEffect(() => {
@@ -664,7 +731,16 @@ export default function App(): React.JSX.Element {
           // Find first valid emergency contact or fallback to user's own phone
           const targetPhone = civilianProfile.emergencyContacts.find(c => c.phone.trim().length > 0)?.phone || civilianProfile.phone;
           const cleanedPhone = targetPhone.replace(/\s+/g, '');
-          payload = `tel:${cleanedPhone}`;
+          
+          const mapLink = `https://maps.google.com/?q=${coordinates.lat},${coordinates.lng}`;
+          const bloodInfo = civilianProfile.bloodGroup && civilianProfile.bloodGroup !== 'Unknown' 
+            ? `\nBlood Group: ${civilianProfile.bloodGroup}` 
+            : '';
+            
+          const messageBody = `URGENT MEDICAL EMERGENCY: ${civilianProfile.name} has been involved in an accident and requires immediate assistance. This message was triggered via their emergency QR code by a bystander.\n\nExact Location:\n${locationName}\nMap: ${mapLink}${bloodInfo}`;
+          
+          // Use sms scheme to pre-fill an SMS with the location and message
+          payload = `sms:${cleanedPhone}?body=${encodeURIComponent(messageBody)}`;
         } else {
           // Build emergency contacts JSON for Web Profile URL encoding
           const contactsPayload = JSON.stringify(
@@ -909,10 +985,42 @@ export default function App(): React.JSX.Element {
     }
   }, [pdfBase64, coordinates, currentUser]);
 
+  const startRecording = async () => {
+    try {
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const { recording: rec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(rec);
+      setIsRecordingState(true);
+    } catch (err) {
+      console.warn('Failed to start recording', err);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recording) return;
+    setIsRecordingState(false);
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+      if (uri) {
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        await handleSOS(base64);
+      }
+    } catch (err) {
+      console.warn('Failed to stop recording', err);
+    }
+  };
+
   // -----------------------------------------------------------------------
   // Trigger SOS Flow
   // -----------------------------------------------------------------------
-  const handleSOS = useCallback(async (): Promise<void> => {
+  const handleSOS = useCallback(async (audioBase64?: string | React.MouseEvent | any): Promise<void> => {
+    const audioData = typeof audioBase64 === 'string' ? audioBase64 : undefined;
     if (appPhase !== 'idle') return;
 
     try {
@@ -936,7 +1044,7 @@ export default function App(): React.JSX.Element {
     try {
       const res = await authedFetch('/api/sos', {
         method: 'POST',
-        body: JSON.stringify({ lat: coords.lat, lng: coords.lng }),
+        body: JSON.stringify({ lat: coords.lat, lng: coords.lng, audioBase64: audioData }),
       });
 
       if (!res.ok) {
@@ -1154,8 +1262,10 @@ export default function App(): React.JSX.Element {
               {/* Center Tactile Actuator */}
               <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
                 <TouchableOpacity
-                  style={styles.radarCenterActuator}
+                  style={[styles.radarCenterActuator, isRecordingState && { backgroundColor: '#ff4444' }]}
                   onPress={handleSOS}
+                  onLongPress={startRecording}
+                  onPressOut={stopRecording}
                   activeOpacity={0.85}
                 >
                   <View style={styles.radarCenterGlow}>
@@ -2655,13 +2765,34 @@ export default function App(): React.JSX.Element {
       {renderTopHeader()}
 
       {citizenAlert && (
-        <View style={styles.citizenAlertBanner}>
+        <View style={[
+          styles.citizenAlertBanner,
+          citizenAlert.isNearby && styles.citizenAlertBannerUrgent,
+        ]}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.citizenAlertKicker}>NEARBY ACCIDENT · {citizenAlert.incidentCode}</Text>
+            <Text style={[
+              styles.citizenAlertKicker,
+              citizenAlert.isNearby && styles.citizenAlertKickerUrgent,
+            ]}>
+              {citizenAlert.isNearby
+                ? `🚨 SOS WITHIN 250M · ${citizenAlert.incidentCode}`
+                : `NEARBY ACCIDENT · ${citizenAlert.incidentCode}`}
+            </Text>
             <Text style={styles.citizenAlertBody}>{citizenAlert.message}</Text>
           </View>
-          <TouchableOpacity style={styles.citizenAlertGo} onPress={() => void handleRespondToAlert()}>
-            <Text style={styles.citizenAlertGoText}>I'M RESPONDING</Text>
+          <TouchableOpacity
+            style={[
+              styles.citizenAlertGo,
+              citizenAlert.isNearby && styles.citizenAlertGoUrgent,
+            ]}
+            onPress={() => void handleRespondToAlert()}
+          >
+            <Text style={[
+              styles.citizenAlertGoText,
+              citizenAlert.isNearby && styles.citizenAlertGoTextUrgent,
+            ]}>
+              {citizenAlert.isNearby ? "🆘 I'M RESPONDING" : "I'M RESPONDING"}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.citizenAlertNo} onPress={() => setCitizenAlert(null)}>
             <Text style={styles.citizenAlertNoText}>NOT NOW</Text>
@@ -5051,5 +5182,32 @@ const styles = StyleSheet.create({
     color: '#FECACA',
     fontSize: 10,
     fontWeight: '700',
+  } as TextStyle,
+
+  // -- Urgent variants for nearby-sos (within 250 m) ----------------------
+  citizenAlertBannerUrgent: {
+    backgroundColor: '#991B1B',
+    borderColor: '#FF3B5C',
+    borderWidth: 2,
+    shadowColor: '#FF3B5C',
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 8,
+  } as ViewStyle,
+  citizenAlertKickerUrgent: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    letterSpacing: 1.0,
+  } as TextStyle,
+  citizenAlertGoUrgent: {
+    backgroundColor: '#FF3B5C',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  } as ViewStyle,
+  citizenAlertGoTextUrgent: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   } as TextStyle,
 });

@@ -64,7 +64,7 @@ export default function SignalSim({ livePhase }: SignalSimProps): React.JSX.Elem
   const raf = useRef<number | null>(null);
 
   useEffect(() => {
-    const disconnect = connectLive({
+    const conn = connectLive({
       'signal-state': (payload) => {
         if (mode !== 'LIVE') return;
         const approach = String(payload.approach || '').toUpperCase();
@@ -91,7 +91,7 @@ export default function SignalSim({ livePhase }: SignalSimProps): React.JSX.Elem
         setProgress(0);
       },
     });
-    return disconnect;
+    return () => conn.disconnect();
   }, [mode]);
 
   useEffect(() => {

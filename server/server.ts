@@ -35,6 +35,7 @@ import { getDistanceKm, type ReporterRole } from './services/hospitals';
 interface SOSRequestBody {
   lat?: number;
   lng?: number;
+  audioBase64?: string;
 }
 
 
@@ -274,7 +275,7 @@ app.post('/api/auth/sync', requireAuth, async (req: Request, res: Response): Pro
 // ---------------------------------------------------------------------------
 app.post('/api/sos', requireAuth, async (req: Request<{}, SOSResponse, SOSRequestBody>, res: Response<SOSResponse>): Promise<void> => {
   try {
-    const { lat, lng } = req.body;
+    const { lat, lng, audioBase64 } = req.body;
     const reporterId: string = req.user!.uid;
 
     // --- Input validation ---
@@ -314,6 +315,8 @@ app.post('/api/sos', requireAuth, async (req: Request<{}, SOSResponse, SOSReques
         incident,
         hospital: primaryHospital,
         source: 'CITIZEN_SOS',
+        reporterUid: reporterId,
+        audioBase64,
       });
     }
 

@@ -138,7 +138,7 @@ export default function ControlRoom({ userProfile }: ControlRoomProps): React.JS
   }, []);
 
   useEffect(() => {
-    const disconnect = connectLive({
+    const conn = connectLive({
       'detection-candidate': (payload) => {
         setSocketState('live');
         upsertEvent({
@@ -197,7 +197,7 @@ export default function ControlRoom({ userProfile }: ControlRoomProps): React.JS
         });
       },
     });
-    return disconnect;
+    return () => conn.disconnect();
   }, [upsertEvent]);
 
   useEffect(() => {

@@ -18,8 +18,10 @@ export async function activateEmergencyResponse(opts: {
   source: string;
   confidence?: number;
   openGreenCorridor?: boolean;
+  reporterUid?: string;
+  audioBase64?: string;
 }): Promise<void> {
-  const { incident, hospital } = opts;
+  const { incident, hospital, audioBase64 } = opts;
   const [lng, lat] = incident.location.coordinates;
   const incidentId = String(incident._id);
   const incidentCode = `CAD-${incidentId.slice(-4).toUpperCase()}`;
@@ -32,6 +34,7 @@ export async function activateEmergencyResponse(opts: {
     hospitalName: incident.assignedHospitalName || hospital?.name,
     confidence: opts.confidence,
     source: opts.source,
+    audioBase64: audioBase64,
   };
 
   try {
@@ -41,7 +44,7 @@ export async function activateEmergencyResponse(opts: {
   }
 
   try {
-    await alertAllCitizens(context);
+    await alertAllCitizens(context, opts.reporterUid);
   } catch (err) {
     console.error('❌ Citizen alert failed:', err);
   }

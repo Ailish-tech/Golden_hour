@@ -4,6 +4,9 @@
 // Connects to /ws/live with the same bearer token api.ts uses, so local-dev
 // and Firebase sessions both work. Reconnects with a capped backoff; a dropped
 // socket must not take the dashboard down.
+//
+// Clients now send their GPS coordinates on subscribe and can push periodic
+// location updates so the server can geo-filter broadcasts (nearby SOS).
 // ============================================================================
 
 import { API_BASE } from './config';
@@ -19,6 +22,7 @@ export type LiveTopic =
   | 'corridor-progress'
   | 'corridor-cleared'
   | 'citizen-alert'
+  | 'nearby-sos'
   | 'hospital-call';
 
 export type LiveHandler = (payload: Record<string, unknown>) => void;
@@ -29,11 +33,23 @@ function liveUrl(): string {
   return `${proto}://${host}/ws/live`;
 }
 
-export function connectLive(handlers: Partial<Record<LiveTopic, LiveHandler>>): () => void {
+export interface LiveConnection {
+  /** Tear down the socket and stop reconnecting. */
+  disconnect: () => void;
+  /** Push a location update to the server so nearby-sos filtering works. */
+  updateLocation: (lat: number, lng: number) => void;
+}
+
+export function connectLive(
+  handlers: Partial<Record<LiveTopic, LiveHandler>>,
+  initialLocation?: { lat: number; lng: number } | null,
+): LiveConnection {
   let closed = false;
   let socket: WebSocket | null = null;
   let delay = 1000;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastLat: number | undefined = initialLocation?.lat;
+  let lastLng: number | undefined = initialLocation?.lng;
 
   const open = async (): Promise<void> => {
     if (closed) return;
@@ -52,7 +68,12 @@ export function connectLive(handlers: Partial<Record<LiveTopic, LiveHandler>>): 
 
     ws.onopen = () => {
       delay = 1000;
-      ws.send(JSON.stringify({ type: 'subscribe', token }));
+      const subscribeMsg: Record<string, unknown> = { type: 'subscribe', token };
+      if (lastLat != null && lastLng != null) {
+        subscribeMsg.lat = lastLat;
+        subscribeMsg.lng = lastLng;
+      }
+      ws.send(JSON.stringify(subscribeMsg));
     };
 
     ws.onmessage = (event) => {
@@ -79,9 +100,18 @@ export function connectLive(handlers: Partial<Record<LiveTopic, LiveHandler>>): 
 
   void open();
 
-  return () => {
-    closed = true;
-    if (timer) clearTimeout(timer);
-    socket?.close();
+  return {
+    disconnect() {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      socket?.close();
+    },
+    updateLocation(lat: number, lng: number) {
+      lastLat = lat;
+      lastLng = lng;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'location-update', lat, lng }));
+      }
+    },
   };
 }

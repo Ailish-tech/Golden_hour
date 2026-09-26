@@ -11,7 +11,7 @@
 
 import { PUBLIC_BASE_URL } from '../config';
 import User from '../models/User';
-import { broadcastToRole } from '../realtime';
+import { broadcastToNearby, broadcastToRole } from '../realtime';
 import type { HospitalInfo } from './hospitals';
 
 export interface IncidentCallContext {
@@ -22,6 +22,7 @@ export interface IncidentCallContext {
   hospitalName?: string;
   confidence?: number;
   source: string;
+  audioBase64?: string;
 }
 
 export interface CallResult {
@@ -172,31 +173,65 @@ export async function notifyHospitalDesk(
 }
 
 /**
- * Alert every citizen the server knows about, plus anyone currently connected
- * as a citizen. Geo-fencing is intentionally not applied: a judge sitting
- * outside the 2 km radius would otherwise see nothing and conclude the
- * feature is dead. The payload still carries a computed distance when we
- * have a last-known point, so the UI can say "nearby".
+ * Alert citizens within 250 m of the incident. Connected sockets with a
+ * known location receive a `nearby-sos` message that includes their computed
+ * distance so the UI can show "X m away" and play an audible alarm.
+ *
+ * The original `citizen-alert` is still broadcast to ALL citizens as a
+ * low-priority banner (so a demo with distant users still sees something).
  */
-export async function alertAllCitizens(context: IncidentCallContext): Promise<number> {
-  const users = await User.find({ role: 'citizen' }).limit(200).lean();
-  const uids = users.map((u) => u.firebaseUid);
+const NEARBY_SOS_RADIUS_M = 250;
 
-  const payload = {
+export async function alertAllCitizens(
+  context: IncidentCallContext,
+  reporterUid?: string,
+): Promise<number> {
+  const mapsUrl = `https://www.google.com/maps?q=${context.lat},${context.lng}`;
+
+  // --- 1. Proximity broadcast (nearby-sos) to connected sockets within 250 m ---
+  const nearbyPayload = {
     incidentId: context.incidentId,
     incidentCode: context.incidentCode,
     lat: context.lat,
     lng: context.lng,
     hospitalName: context.hospitalName,
     source: context.source,
-    mapsUrl: `https://www.google.com/maps?q=${context.lat},${context.lng}`,
+    mapsUrl,
+    radiusMetres: NEARBY_SOS_RADIUS_M,
+    audioBase64: context.audioBase64,
+    message:
+      `🚨 SOS — accident ${NEARBY_SOS_RADIUS_M} m from you! ` +
+      `Incident ${context.incidentCode}. Tap to respond as a Good Samaritan.`,
+  };
+
+  const reached = broadcastToNearby(
+    context.lat,
+    context.lng,
+    NEARBY_SOS_RADIUS_M,
+    'nearby-sos',
+    nearbyPayload,
+    { role: 'citizen', excludeUid: reporterUid },
+  );
+
+  console.log(
+    `📣  Nearby SOS (${NEARBY_SOS_RADIUS_M} m) → ${reached} connected citizen(s)`,
+  );
+
+  // --- 2. Wide citizen-alert banner for everyone else (no audio alarm) ---
+  const widePayload = {
+    incidentId: context.incidentId,
+    incidentCode: context.incidentCode,
+    lat: context.lat,
+    lng: context.lng,
+    hospitalName: context.hospitalName,
+    source: context.source,
+    mapsUrl,
     message:
       `Accident nearby — ${context.incidentCode}. Ambulance is on the way. ` +
       `If you can reach the scene, tap I'm responding to join as a Good Samaritan.`,
   };
 
-  broadcastToRole('citizen', 'citizen-alert', payload);
+  broadcastToRole('citizen', 'citizen-alert', widePayload);
 
-  console.log(`📣  Citizen alert → ${uids.length} account(s) + every connected citizen socket`);
-  return uids.length;
+  return reached;
 }

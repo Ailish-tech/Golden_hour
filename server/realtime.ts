@@ -18,6 +18,7 @@ export type LiveTopic =
   | 'corridor-progress'
   | 'corridor-cleared'
   | 'citizen-alert'
+  | 'nearby-sos'
   | 'hospital-call';
 
 interface LiveMessage {
@@ -29,6 +30,8 @@ interface SocketMeta {
   uid: string;
   role: string;
   zone?: string;
+  lat?: number;
+  lng?: number;
   ws: WebSocket;
 }
 
@@ -81,8 +84,23 @@ export function initLiveChannel(httpServer: HttpServer): {
           }
 
           meta = { uid, role: user.role, zone: user.zone, ws };
+
+          // Accept optional location with subscribe
+          if (Number.isFinite(msg.lat) && Number.isFinite(msg.lng)) {
+            meta.lat = msg.lat;
+            meta.lng = msg.lng;
+          }
+
           connections.add(meta);
           ws.send(JSON.stringify({ type: 'subscribe-success' }));
+        }
+
+        // Clients can push location updates without re-subscribing
+        if (msg.type === 'location-update' && meta) {
+          if (Number.isFinite(msg.lat) && Number.isFinite(msg.lng)) {
+            meta.lat = msg.lat;
+            meta.lng = msg.lng;
+          }
         }
       } catch (err) {
         console.warn('Live WebSocket parse error', err);
@@ -150,4 +168,47 @@ export function broadcastToRole(role: string, topic: LiveTopic, payload: unknown
       client.ws.send(msg);
     }
   }
+}
+
+/**
+ * Haversine distance in metres between two WGS-84 points.
+ */
+function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000; // Earth radius in metres
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Broadcast to connected sockets whose last-known position is within
+ * `radiusMetres` of the given point. Optionally filter to a single role
+ * (e.g. 'citizen'). Sockets that never sent a location are skipped.
+ */
+export function broadcastToNearby(
+  originLat: number,
+  originLng: number,
+  radiusMetres: number,
+  topic: LiveTopic,
+  payload: unknown,
+  opts?: { role?: string; excludeUid?: string },
+): number {
+  const msg = JSON.stringify({ topic, payload });
+  let reached = 0;
+  for (const client of connections) {
+    if (client.ws.readyState !== WebSocket.OPEN) continue;
+    if (opts?.role && client.role !== opts.role) continue;
+    if (opts?.excludeUid && client.uid === opts.excludeUid) continue;
+    if (client.lat == null || client.lng == null) continue;
+    const dist = haversineMetres(originLat, originLng, client.lat, client.lng);
+    if (dist <= radiusMetres) {
+      client.ws.send(msg);
+      reached++;
+    }
+  }
+  return reached;
 }
